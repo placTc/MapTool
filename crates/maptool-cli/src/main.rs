@@ -72,7 +72,7 @@ fn main() -> ExitCode {
         }
     };
 
-    let t = Instant::now();
+    let started = Instant::now();
     let map = match vectorize_file(&args.input, &args.opts) {
         Ok(m) => m,
         Err(Error::Invalid { violations, total }) => {
@@ -104,7 +104,7 @@ fn main() -> ExitCode {
             map.provinces.len(),
             svg.len() as f64 / 1e6,
             args.output.display(),
-            t.elapsed()
+            started.elapsed()
         );
     }
     ExitCode::SUCCESS

@@ -5,6 +5,7 @@
   import { biomeList, filters, LEVEL, type MapDocument, type ViewKind } from '../lib/map';
   import { TOOLS, type ToolId } from '../lib/tools';
   import { isMultiSelectClick, selectOnFocus } from '../lib/utils';
+  import { boxRect, screenToImage, wheelPixels, zoomedCamera } from '../lib/viewport';
   import BoxToolPanel from './BoxToolPanel.svelte';
   import GroupsPanel from './GroupsPanel.svelte';
   import InfoTip from './InfoTip.svelte';
@@ -358,10 +359,8 @@
   }
 
   // ---- Pointer: hover, click to select, drag to pan or to draw a box, wheel to zoom
-  const toImage = (clientX: number, clientY: number): [number, number] => {
-    const r = canvasEl!.getBoundingClientRect();
-    return [cam.x + (clientX - r.left) / cam.k, cam.y + (clientY - r.top) / cam.k];
-  };
+  const toImage = (clientX: number, clientY: number): [number, number] =>
+    screenToImage(cam, canvasEl!.getBoundingClientRect(), clientX, clientY);
 
   function pickAt(clientX: number, clientY: number): number | null {
     const [x, y] = toImage(clientX, clientY);
@@ -403,8 +402,7 @@
       cam = { x: drag.cam.x - dx / drag.cam.k, y: drag.cam.y - dy / drag.cam.k, k: drag.cam.k };
       requestDraw();
     } else {
-      const r = canvasEl!.getBoundingClientRect();
-      marquee = { x: Math.min(drag.x, e.clientX) - r.left, y: Math.min(drag.y, e.clientY) - r.top, w: Math.abs(dx), h: Math.abs(dy) };
+      marquee = boxRect(drag.x, drag.y, e.clientX, e.clientY, canvasEl!.getBoundingClientRect());
       // Show what the box would select as it is dragged.
       preview = doc.provincesOfUnits(doc.layerUnitsOf(Uint32Array.from(boxProvinces(drag.x, drag.y, e.clientX, e.clientY)), level)) as unknown as number[];
       previewKey++;
@@ -425,23 +423,10 @@
     }
   }
 
-  /** Wheel delta in pixels. Browsers report lines (Firefox mouse wheels) or pages too. */
-  function wheelPixels(e: WheelEvent): number {
-    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * 40;
-    if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * ch;
-    return e.deltaY;
-  }
-
   function onWheel(e: WheelEvent) {
     e.preventDefault();
-    const r = canvasEl!.getBoundingClientRect();
-    const sx = e.clientX - r.left;
-    const sy = e.clientY - r.top;
-    const k = Math.min(Math.max(cam.k * Math.exp(-wheelPixels(e) * 0.0015), fitK * 0.5), MAX_K);
     // Keep the image point under the cursor where it is.
-    const px = cam.x + sx / cam.k;
-    const py = cam.y + sy / cam.k;
-    cam = { x: px - sx / k, y: py - sy / k, k };
+    cam = zoomedCamera(cam, canvasEl!.getBoundingClientRect(), e.clientX, e.clientY, wheelPixels(e, ch), fitK, MAX_K);
     requestDraw();
   }
 

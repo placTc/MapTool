@@ -151,13 +151,8 @@ impl MapMesh {
     }
 }
 
-pub fn build(
-    width: u32,
-    height: u32,
-    provinces: Vec<ProvinceInfo>,
-    rings: Vec<Vec<Vec<[f32; 2]>>>,
-) -> Result<MapMesh, Error> {
-    let mut mesh = MapMesh {
+fn empty_mesh(width: u32, height: u32, provinces: Vec<ProvinceInfo>) -> MapMesh {
+    MapMesh {
         width,
         height,
         provinces,
@@ -169,53 +164,76 @@ pub fn build(
         line_ranges: Vec::new(),
         ring_starts: vec![0],
         province_rings: Vec::new(),
-    };
+    }
+}
+
+/// Push one province's ring outlines into the mesh's border buffers.
+fn add_province_borders(mesh: &mut MapMesh, province_rings: &[Vec<[f32; 2]>]) {
+    let ring_base = (mesh.ring_starts.len() - 1) as u32;
+    let line_start = mesh.line_indices.len() as u32;
+    for ring in province_rings {
+        let base = (mesh.line_positions.len() / 2) as u32;
+        let n = ring.len() as u32;
+        for p in ring {
+            mesh.line_positions.extend_from_slice(p);
+        }
+        for i in 0..n {
+            mesh.line_indices.push(base + i);
+            mesh.line_indices.push(base + (i + 1) % n);
+        }
+        mesh.ring_starts.push(base + n);
+    }
+    mesh.province_rings.push([ring_base, province_rings.len() as u32]);
+    mesh.line_ranges.push([line_start, mesh.line_indices.len() as u32 - line_start]);
+}
+
+/// Tessellate one province's rings (even-odd fill, so holes and exclaves just work)
+/// into a fresh triangle vertex/index buffer.
+fn triangulate_province(
+    tess: &mut FillTessellator,
+    options: &FillOptions,
+    province_rings: &[Vec<[f32; 2]>],
+    id: u32,
+) -> Result<VertexBuffers<[f32; 2], u32>, Error> {
+    let mut builder = Path::builder();
+    for ring in province_rings {
+        builder.begin(point(ring[0][0], ring[0][1]));
+        for p in &ring[1..] {
+            builder.line_to(point(p[0], p[1]));
+        }
+        builder.end(true);
+    }
+    let path = builder.build();
+    let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
+    tess.tessellate_path(&path, options, &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()))
+        .map_err(|e| Error::Tessellation { province: id, message: format!("{e:?}") })?;
+    Ok(buffers)
+}
+
+/// Append one province's triangles to the mesh's flat vertex/index buffers.
+fn append_triangles(mesh: &mut MapMesh, id: u32, buffers: &VertexBuffers<[f32; 2], u32>) {
+    let base = mesh.vertex_province.len() as u32;
+    for p in &buffers.vertices {
+        mesh.positions.extend_from_slice(p);
+    }
+    mesh.vertex_province.extend(std::iter::repeat_n(id, buffers.vertices.len()));
+    mesh.indices.extend(buffers.indices.iter().map(|i| i + base));
+}
+
+pub fn build(
+    width: u32,
+    height: u32,
+    provinces: Vec<ProvinceInfo>,
+    rings: Vec<Vec<Vec<[f32; 2]>>>,
+) -> Result<MapMesh, Error> {
+    let mut mesh = empty_mesh(width, height, provinces);
     let mut tess = FillTessellator::new();
     let options = FillOptions::default().with_fill_rule(FillRule::EvenOdd);
 
     for (id, province_rings) in rings.iter().enumerate() {
-        // Borders.
-        let ring_base = (mesh.ring_starts.len() - 1) as u32;
-        let line_start = mesh.line_indices.len() as u32;
-        for ring in province_rings {
-            let base = (mesh.line_positions.len() / 2) as u32;
-            let n = ring.len() as u32;
-            for p in ring {
-                mesh.line_positions.extend_from_slice(p);
-            }
-            for i in 0..n {
-                mesh.line_indices.push(base + i);
-                mesh.line_indices.push(base + (i + 1) % n);
-            }
-            mesh.ring_starts.push(base + n);
-        }
-        mesh.province_rings.push([ring_base, province_rings.len() as u32]);
-        mesh.line_ranges.push([line_start, mesh.line_indices.len() as u32 - line_start]);
-
-        // Fill: one path per province, even-odd, so holes and exclaves just work.
-        let mut builder = Path::builder();
-        for ring in province_rings {
-            builder.begin(point(ring[0][0], ring[0][1]));
-            for p in &ring[1..] {
-                builder.line_to(point(p[0], p[1]));
-            }
-            builder.end(true);
-        }
-        let path = builder.build();
-        let mut buffers: VertexBuffers<[f32; 2], u32> = VertexBuffers::new();
-        tess.tessellate_path(
-            &path,
-            &options,
-            &mut BuffersBuilder::new(&mut buffers, |v: FillVertex| v.position().to_array()),
-        )
-        .map_err(|e| Error::Tessellation { province: id as u32, message: format!("{e:?}") })?;
-
-        let base = mesh.vertex_province.len() as u32;
-        for p in &buffers.vertices {
-            mesh.positions.extend_from_slice(p);
-        }
-        mesh.vertex_province.extend(std::iter::repeat_n(id as u32, buffers.vertices.len()));
-        mesh.indices.extend(buffers.indices.iter().map(|i| i + base));
+        add_province_borders(&mut mesh, province_rings);
+        let buffers = triangulate_province(&mut tess, &options, province_rings, id as u32)?;
+        append_triangles(&mut mesh, id as u32, &buffers);
     }
     Ok(mesh)
 }

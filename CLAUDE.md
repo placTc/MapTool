@@ -37,6 +37,11 @@ corner rules) -> `build` (chains linked into rings; SVG paths or flattened rings
 - **Views are levels** (`Level`: provinces, states, countries, regions). `Document::unit` says what a
   province is shown/picked/outlined as at a level, falling back country -> state -> province.
   `border_indices(level)` hides borders inside a unit.
+- **Selection is per layer.** `Editor.svelte` keeps four sets (provinces, states, countries, regions)
+  but a view only ever fills its own: `Document::layer_object` / `layer_units_of` / `layer_provinces`
+  return only the view's own kind of object and nothing for a province that has none (unlike `unit`,
+  which falls back for *drawing*). Click, hover, box and the box-panel actions all go through them.
+  Panels that pick a group switch to its view first. Do not reintroduce fallbacks into selection.
 - **Model rules** (all decided by the user): province identity is its exact RGB color; a province is
   in at most one state; a state is in at most one country and at most one region, countries and
   regions are independent of each other; a sea province's biome is always Sea (the land biome is
@@ -55,7 +60,7 @@ corner rules) -> `build` (chains linked into rings; SVG paths or flattened rings
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # needed in Claude's shell; the user's shell has it
-cargo test --workspace                 # ~95 tests: csv 13, document 30, groups 21, vectorize 31
+cargo test --workspace                 # ~97 tests: csv 13, document 30, groups 23, vectorize 31
 cargo clippy --workspace
 cargo run --release -p maptool-core --example bench    # timings on a synthetic 5632x2048 map
 cargo run --release -p maptool-cli -- map.png -o map.svg

@@ -325,6 +325,51 @@ fn borders_inside_a_unit_are_hidden() {
 }
 
 #[test]
+fn a_view_only_holds_objects_of_its_own_layer() {
+    let (d, [s1, s2, s3], c, r) = layered();
+    let obj = |p, l| d.layer_object(p, l);
+    // The province layer holds every province.
+    assert_eq!(obj(5, Level::Provinces), Some(Unit::Province(5)));
+    assert_eq!(obj(0, Level::Provinces), Some(Unit::Province(0)));
+    // The state layer holds states only: a province in no state is nothing here.
+    assert_eq!(obj(0, Level::States), Some(Unit::State(s1)));
+    assert_eq!(obj(5, Level::States), None);
+    // The country layer holds countries only: a state with no country, and a province with
+    // no state, are nothing here (where `unit` falls back to them).
+    assert_eq!(obj(0, Level::Countries), Some(Unit::Country(c)));
+    assert_eq!(obj(2, Level::Countries), Some(Unit::Country(c)));
+    assert_eq!(obj(3, Level::Countries), None, "state S3 has no country");
+    assert_eq!(d.unit(3, Level::Countries), Unit::State(s3), "but it is shown as its state");
+    assert_eq!(obj(5, Level::Countries), None);
+    // The same for regions.
+    assert_eq!(obj(3, Level::Regions), Some(Unit::Region(r)));
+    assert_eq!(obj(2, Level::Regions), None, "state S2 has no region");
+    assert_eq!(d.unit(2, Level::Regions), Unit::State(s2));
+    assert_eq!(obj(99, Level::Provinces), None, "unknown province");
+    assert_eq!(obj(99, Level::States), None);
+}
+
+#[test]
+fn what_lights_up_and_what_a_click_selects_follow_the_layer() {
+    let (d, [s1, s2, ..], c, _) = layered();
+    assert_eq!(d.layer_provinces(1, Level::Provinces), vec![1]);
+    assert_eq!(d.layer_provinces(1, Level::States), vec![0, 1]);
+    assert_eq!(d.layer_provinces(1, Level::Countries), vec![0, 1, 2]);
+    assert_eq!(d.layer_provinces(1, Level::Regions), vec![0, 1, 3, 4]);
+    assert!(d.layer_provinces(4, Level::Countries).is_empty(), "no country, so nothing lights up");
+    assert!(d.layer_provinces(7, Level::States).is_empty());
+    assert!(d.layer_provinces(99, Level::Provinces).is_empty());
+
+    // A box over provinces 0, 1, 2, 3, 5 in each view.
+    let boxed = [0, 1, 2, 3, 5];
+    assert_eq!(d.layer_units_of(&boxed, Level::Provinces), vec![0, 0, 0, 1, 0, 2, 0, 3, 0, 5]);
+    assert_eq!(d.layer_units_of(&boxed, Level::States), vec![1, s1, 1, s2, 1, d.states.state_of(3).unwrap()], "province 5 is in no state");
+    assert_eq!(d.layer_units_of(&boxed, Level::Countries), vec![2, c], "one country; province 3's state has none");
+    assert_eq!(d.layer_units_of(&[5, 6, 7], Level::States), Vec::<u32>::new(), "nothing to select");
+    assert_eq!(d.layer_units_of(&[0, 0, 99], Level::Countries), vec![2, c], "repeats and unknown provinces are ignored");
+}
+
+#[test]
 fn the_units_of_some_provinces() {
     let (d, [s1, s2, _], c, _) = layered();
     assert_eq!(d.units_of(&[0, 1, 2, 5], Level::Countries), vec![2, c, 0, 5]);

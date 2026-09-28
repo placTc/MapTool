@@ -53,8 +53,13 @@ browser's color pipeline, so province colors are exact.
 **Start screen.** Open a PNG/BMP (or a saved `.maptool` file), or pick a recent map.
 The smoothing and validation settings live here and apply to newly built maps.
 
-**Editing.** Click a province to select it; ctrl/cmd/shift-click adds or removes provinces;
-the wheel zooms, Esc clears the selection.
+**Editing.** Click something to select it; ctrl/cmd/shift-click adds or removes; the wheel
+zooms, Esc clears the selection. **Each view selects its own kind of thing**: the Provinces view
+selects provinces, States selects states, Countries selects countries, Regions selects strategic
+regions. A click or box that lands where the view has no such object (a province in no state, in
+the States view) selects nothing, and hovering there lights nothing up. Picking a state, country or
+region in its sidebar list takes you to its view. Switching views clears the selection, and
+creating a state, country or region from a selection clears it too.
 
 - *Tools*: the tool sidebar on the left picks what dragging on the map does. **Pan** (`P`)
   moves the map; **Box** (`B`) draws a selection box. Clicking selects with either, and holding
@@ -64,7 +69,9 @@ the wheel zooms, Esc clears the selection.
   the sidebar, choose what dropping the box does (replace the selection, add to it, or
   deselect what it covers; Shift adds and Alt removes whatever the mode is), whether it takes
   provinces it touches or only those fully inside it, land and/or sea only, and whether to
-  skip provinces already in a state. The provinces a box would take light up while you drag.
+  skip provinces already in a state (that option, and the two buttons about provinces in states,
+  apply in the Provinces view only). In the other views a box selects the states, countries or
+  regions that have a province it touches. The objects a box would take light up while you drag.
   Buttons deselect provinces already in states, select every unassigned province, or invert
   the selection. Pan with middle-drag or Space held, or switch back to the **Pan** tool.
 - *States* are named, colored groups of provinces, with an optional description. Create one

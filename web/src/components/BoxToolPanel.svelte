@@ -1,5 +1,9 @@
 <script lang="ts">
+  import type { ViewKind } from '../lib/map';
+
   interface Props {
+    /** The view the box is used in: it selects that view's objects. */
+    layer: ViewKind;
     mode: 'replace' | 'add' | 'remove';
     whole: boolean;
     types: 'all' | 'land' | 'sea';
@@ -8,6 +12,7 @@
     hasSelection: boolean;
     ondeselectinstates: () => void;
     onselectunassigned: () => void;
+    onselectall: () => void;
     oninvert: () => void;
     onclear: () => void;
   }
@@ -16,16 +21,24 @@
     whole = $bindable(),
     types = $bindable(),
     skipInStates = $bindable(),
+    layer,
     hasSelection,
     ondeselectinstates,
     onselectunassigned,
+    onselectall,
     oninvert,
     onclear,
   }: Props = $props();
+
+  const NOUN: Record<ViewKind, string> = { provinces: 'provinces', states: 'states', countries: 'countries', regions: 'strategic regions' };
+  const noun = $derived(NOUN[layer]);
 </script>
 
 <section class="panel">
   <h2>Box selection</h2>
+  {#if layer !== 'provinces'}
+    <p class="hint">In this view a box selects <strong>{noun}</strong>: the ones with a province that it {whole ? 'covers' : 'touches'}.</p>
+  {/if}
   <p class="hint">Drag a box on the map. Hold <kbd>Shift</kbd> to add or <kbd>Alt</kbd> to remove, whatever the mode. Middle-drag or hold <kbd>Space</kbd> to pan.</p>
 
   <fieldset>
@@ -46,15 +59,20 @@
     <label><input type="radio" bind:group={types} value="all" /> Land and sea</label>
     <label><input type="radio" bind:group={types} value="land" /> Land only</label>
     <label><input type="radio" bind:group={types} value="sea" /> Sea only</label>
-    <label class="gap"><input type="checkbox" bind:checked={skipInStates} /> Skip provinces already in a state</label>
+    <label class="gap" class:off={layer !== 'provinces'} title={layer === 'provinces' ? '' : 'Only applies in the Provinces view'}>
+      <input type="checkbox" bind:checked={skipInStates} disabled={layer !== 'provinces'} /> Skip provinces already in a state
+    </label>
   </fieldset>
 
   <div class="actions">
-    <button onclick={ondeselectinstates} disabled={!hasSelection} title="Take every province that is already in a state out of the selection">
-      Deselect provinces already in states
-    </button>
-    <button onclick={onselectunassigned} title="Select every province that is in no state">Select all unassigned provinces</button>
-    <button onclick={oninvert} title="Select the provinces that are not selected, and the other way round">Invert selection</button>
+    {#if layer === 'provinces'}
+      <button onclick={ondeselectinstates} disabled={!hasSelection} title="Take every province that is already in a state out of the selection">
+        Deselect provinces already in states
+      </button>
+      <button onclick={onselectunassigned} title="Select every province that is in no state">Select all unassigned provinces</button>
+    {/if}
+    <button onclick={onselectall}>Select all {noun}</button>
+    <button onclick={oninvert} title="Select the {noun} that are not selected, and the other way round">Invert selection</button>
     <button onclick={onclear} disabled={!hasSelection}>Clear selection</button>
   </div>
 </section>
@@ -103,6 +121,10 @@
   }
   label.gap {
     margin-top: 4px;
+  }
+  label.off {
+    opacity: 0.5;
+    cursor: default;
   }
   .actions {
     display: grid;

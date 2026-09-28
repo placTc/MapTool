@@ -206,6 +206,22 @@ impl MapDocument {
         Ok(self.0.units_of(provinces, level_of(level)?))
     }
 
+    /// The layer objects that `provinces` belong to at a view level, as `[kind, id, ...]`:
+    /// provinces at level 0, states at 1, countries at 2, strategic regions at 3. Provinces
+    /// that belong to no such object (a province in no state, at level 1) are skipped. This is
+    /// what a click or a box can select in a view.
+    #[wasm_bindgen(js_name = layerUnitsOf)]
+    pub fn layer_units_of(&self, provinces: &[u32], level: u8) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.layer_units_of(provinces, level_of(level)?))
+    }
+
+    /// The provinces of the layer object `province` belongs to at a view level; empty when it
+    /// belongs to none. This is what lights up under the pointer in a view.
+    #[wasm_bindgen(js_name = layerProvinces)]
+    pub fn layer_provinces(&self, province: u32, level: u8) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.layer_provinces(province, level_of(level)?))
+    }
+
     /// The provinces of some units given as `[kind, id, ...]` (see `unitsOf`), ascending.
     #[wasm_bindgen(js_name = provincesOfUnits)]
     pub fn provinces_of_units(&self, units: &[u32]) -> Vec<u32> {

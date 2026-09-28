@@ -94,7 +94,7 @@ impl Level {
 }
 
 /// The thing a province is shown, picked and outlined as, at some [`Level`].
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash)]
 pub enum Unit {
     Province(u32),
     State(u32),
@@ -255,6 +255,46 @@ impl Document {
             Level::Countries => self.countries.group_of(state).map_or(Unit::State(state), Unit::Country),
             Level::Regions => self.regions.group_of(state).map_or(Unit::State(state), Unit::Region),
         }
+    }
+
+    /// The object of layer `level` that `province` belongs to: itself for the province layer,
+    /// its state, country or strategic region for the others. `None` when it belongs to no
+    /// such object (unlike [`Document::unit`], which falls back to a smaller unit).
+    ///
+    /// This is what can be selected in a view: selection only ever holds objects of the
+    /// view's own layer.
+    pub fn layer_object(&self, province: u32, level: Level) -> Option<Unit> {
+        if province as usize >= self.mesh.provinces.len() {
+            return None;
+        }
+        let unit = self.unit(province, level);
+        (unit.kind() == level as u8).then_some(unit)
+    }
+
+    /// The provinces of the layer object that `province` belongs to (see
+    /// [`Document::layer_object`]); empty when it belongs to none.
+    pub fn layer_provinces(&self, province: u32, level: Level) -> Vec<u32> {
+        match self.layer_object(province, level) {
+            Some(u) => self.provinces_of_units(&[u.kind() as u32, u.id()]),
+            None => Vec::new(),
+        }
+    }
+
+    /// The layer objects (see [`Document::layer_object`]) that `provinces` belong to, as
+    /// `[kind, id, kind, id, ...]`, each once, in order of first appearance. Provinces that
+    /// belong to no object of the layer, and unknown ones, are skipped.
+    pub fn layer_units_of(&self, provinces: &[u32], level: Level) -> Vec<u32> {
+        let mut seen = std::collections::HashSet::new();
+        let mut out = Vec::new();
+        for &p in provinces {
+            if let Some(u) = self.layer_object(p, level)
+                && seen.insert(u)
+            {
+                out.push(u.kind() as u32);
+                out.push(u.id());
+            }
+        }
+        out
     }
 
     /// The provinces that highlight together with `province` at `level`: everything in its

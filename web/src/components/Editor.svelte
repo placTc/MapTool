@@ -121,7 +121,7 @@
 
   const hoveredGroup = $derived.by(() => {
     rev;
-    return hoverProvince === null ? ([] as number[]) : Array.from(doc.groupProvinces(hoverProvince, level));
+    return hoverProvince === null ? ([] as number[]) : Array.from(doc.layerProvinces(hoverProvince, level));
   });
   /** What lights up: the box's preview while one is being dragged, else what is under the pointer. */
   const hovered = $derived(preview ?? hoveredGroup);
@@ -130,12 +130,15 @@
   );
 
   const UNIT_LABELS = ['province', 'state', 'country', 'strategic region'];
+  const LAYER_NOUN: Record<ViewKind, string> = { provinces: 'province', states: 'state', countries: 'country', regions: 'strategic region' };
 
   const hoverInfo = $derived.by(() => {
     rev;
     const p = hoverProvince;
     if (p === null) return null;
-    const [kind, id] = doc.unitsOf(Uint32Array.of(p), level);
+    // The object of this view's layer under the pointer, if the province belongs to one.
+    const object = doc.layerUnitsOf(Uint32Array.of(p), level);
+    const [kind, id] = level > 0 && object.length ? object : [0, 0];
     const s = doc.stateOf(p);
     const c = s >= 0 ? doc.groupOfState(0, s) : -1;
     const unitName = kind === 1 ? doc.stateName(id) : kind === 2 ? doc.groupName(0, id) : kind === 3 ? doc.groupName(1, id) : null;
@@ -261,15 +264,26 @@
 
   /** A click on province `p` (or empty space when null). Ctrl, cmd or shift flips it in the selection. */
   function select(p: number | null, flip: boolean) {
-    if (p === null) {
+    // Only objects of this view's layer can be selected: a province in no state is nothing
+    // in the States view, and so on.
+    const units = p === null ? [] : doc.layerUnitsOf(Uint32Array.of(p), level);
+    if (units.length === 0) {
       if (!flip) clearSelection();
       return;
     }
-    applyUnits(doc.unitsOf(Uint32Array.of(p), level), flip ? 'toggle' : 'replace');
+    applyUnits(units, flip ? 'toggle' : 'replace');
   }
 
-  /** Pick a state, country or region from its panel. */
-  const selectGroup = (kind: number, id: number, flip: boolean) => applyUnits([kind, id], flip ? 'toggle' : 'replace');
+  /** Pick a state, country or region from its panel. That is only possible in its own view, so go there. */
+  function selectGroup(kind: number, id: number, flip: boolean) {
+    const view: ViewKind = KINDS[kind];
+    if (view !== viewKind) {
+      setView(view);
+      applyUnits([kind, id], 'replace');
+    } else {
+      applyUnits([kind, id], flip ? 'toggle' : 'replace');
+    }
+  }
 
   function deleteState(id: number) {
     sel = { ...sel, states: new Set([...sel.states].filter((s) => s !== id)) };
@@ -302,7 +316,7 @@
   function applyBox(provinces: number[], e: PointerEvent) {
     // The modifier wins over the mode, so a box can add or remove without changing it.
     const how = e.shiftKey ? 'add' : e.altKey ? 'remove' : boxMode;
-    applyUnits(doc.unitsOf(Uint32Array.from(provinces), level), how);
+    applyUnits(doc.layerUnitsOf(Uint32Array.from(provinces), level), how);
   }
 
   /** Provinces in the selection that are not in any state are kept; the rest are let go. */
@@ -316,11 +330,30 @@
     sel = { ...emptySelection(), provinces: new Set(doc.unassignedProvinces()) };
   }
 
+  /** Every object of this view's layer. */
+  function allObjects(): number[] {
+    switch (viewKind) {
+      case 'provinces':
+        return Array.from({ length: doc.len }, (_, i) => i);
+      case 'states':
+        return Array.from(doc.stateIds());
+      case 'countries':
+        return Array.from(doc.groupIds(0));
+      default:
+        return Array.from(doc.groupIds(1));
+    }
+  }
+
+  const layerSet = (ids: number[]): Selection => ({ ...emptySelection(), [KINDS[level]]: new Set(ids) });
+
+  function selectAll() {
+    sel = layerSet(allObjects());
+  }
+
+  /** Select what is not selected, and the other way round, among this view's objects. */
   function invertSelection() {
-    const chosen = highlighted;
-    const rest: number[] = [];
-    for (let p = 0; p < doc.len; p++) if (!chosen.has(p)) rest.push(p);
-    sel = { ...emptySelection(), provinces: new Set(rest) };
+    const chosen = sel[KINDS[level]];
+    sel = layerSet(allObjects().filter((id) => !chosen.has(id)));
   }
 
   // ---- Pointer: hover, click to select, drag to pan or to draw a box, wheel to zoom
@@ -366,7 +399,7 @@
       const r = canvasEl!.getBoundingClientRect();
       marquee = { x: Math.min(drag.x, e.clientX) - r.left, y: Math.min(drag.y, e.clientY) - r.top, w: Math.abs(dx), h: Math.abs(dy) };
       // Show what the box would select as it is dragged.
-      preview = doc.provincesOfUnits(doc.unitsOf(Uint32Array.from(boxProvinces(drag.x, drag.y, e.clientX, e.clientY)), level)) as unknown as number[];
+      preview = doc.provincesOfUnits(doc.layerUnitsOf(Uint32Array.from(boxProvinces(drag.x, drag.y, e.clientX, e.clientY)), level)) as unknown as number[];
       previewKey++;
     }
   }
@@ -639,9 +672,11 @@
           bind:whole={boxWhole}
           bind:types={boxTypes}
           bind:skipInStates={boxSkipInStates}
+          layer={viewKind}
           hasSelection={selectedCount > 0}
           ondeselectinstates={deselectProvincesInStates}
           onselectunassigned={selectUnassigned}
+          onselectall={selectAll}
           oninvert={invertSelection}
           onclear={clearSelection}
         />
@@ -654,12 +689,16 @@
           ids={selectedProvinceList}
           {mutate}
           onclear={() => (sel = { ...sel, provinces: new Set() })}
-          oncreated={(id) => applyUnits([1, id], 'replace')}
+          oncreated={clearSelection}
         />
       {:else if selectedCount === 0 && tool !== 'box'}
         <p class="hint">
-          Click a province to select it; ctrl-click (or shift-click) adds more. Wheel zooms, Esc clears. Pick a tool on the left: Pan (P) or Box select (B).
-          Switch to States, Countries or Regions to work with whole groups.
+          {#if viewKind === 'provinces'}
+            Click a province to select it; ctrl-click (or shift-click) adds more.
+          {:else}
+            Click a {LAYER_NOUN[viewKind]} to select it; ctrl-click adds more. Only {LAYER_NOUN[viewKind]}s can be selected in this view.
+          {/if}
+          Wheel zooms, Esc clears. Pick a tool on the left: Pan (P) or Box select (B). Each view selects its own kind of thing.
         </p>
       {/if}
 
@@ -683,7 +722,7 @@
         onselect={(id, flip) => selectGroup(2, id, flip)}
         ondelete={(id) => deleteGroup(0, id)}
         onzoom={zoomToProvinces}
-        oncreated={(id) => applyUnits([2, id], 'replace')}
+        oncreated={clearSelection}
         {mutate}
       />
       <GroupsPanel
@@ -697,7 +736,7 @@
         onselect={(id, flip) => selectGroup(3, id, flip)}
         ondelete={(id) => deleteGroup(1, id)}
         onzoom={zoomToProvinces}
-        oncreated={(id) => applyUnits([3, id], 'replace')}
+        oncreated={clearSelection}
         {mutate}
       />
     </aside>

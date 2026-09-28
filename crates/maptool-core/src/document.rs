@@ -438,6 +438,59 @@ impl Document {
         self.filter_provinces(&self.mesh.provinces_in_rect(x0, y0, x1, y1, whole), flags)
     }
 
+    /// Border segments (index pairs into `mesh.line_positions`) of the outline of the union of
+    /// `ids`: a segment shared with another selected province is left out, so only the outer
+    /// edge of the whole group remains. Unknown ids and repeats are ignored.
+    ///
+    /// Same result as [`MapMesh::boundary_indices`] (in a different order), but it uses the
+    /// neighbour of every segment that the document already knows, so it takes time only
+    /// proportional to the selected segments (a few milliseconds for the whole map).
+    pub fn boundary_indices(&self, ids: &[u32]) -> Vec<u32> {
+        let n = self.mesh.provinces.len();
+        let mut selected = vec![false; n];
+        for &id in ids {
+            if let Some(slot) = selected.get_mut(id as usize) {
+                *slot = true;
+            }
+        }
+        let mut out = Vec::new();
+        for (province, range) in self.mesh.line_ranges.iter().enumerate() {
+            if !selected[province] {
+                continue;
+            }
+            for k in (range[0] / 2) as usize..((range[0] + range[1]) / 2) as usize {
+                let mate = self.segment_mate[k];
+                if mate == NO_PROVINCE || !selected[mate as usize] {
+                    out.extend_from_slice(&self.mesh.line_indices[k * 2..k * 2 + 2]);
+                }
+            }
+        }
+        out
+    }
+
+    /// The distinct states that `provinces` are in, ascending, with -1 standing for "in no
+    /// state" when at least one of them is in none. Unknown provinces are ignored.
+    pub fn states_of(&self, provinces: &[u32]) -> Vec<i64> {
+        let mut out: Vec<i64> = provinces
+            .iter()
+            .filter(|&&p| (p as usize) < self.mesh.provinces.len())
+            .map(|&p| self.states.state_of(p).map_or(-1, |s| s as i64))
+            .collect();
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
+    /// Which biomes the land provinces among `provinces` have, as a bit mask with bit `i` set
+    /// for the biome with code `i`. Sea provinces (locked to Sea) are not counted.
+    pub fn land_biomes(&self, provinces: &[u32]) -> u32 {
+        provinces
+            .iter()
+            .filter_map(|&p| self.provinces.get(p))
+            .filter(|m| m.kind == Kind::Land)
+            .fold(0, |mask, m| mask | 1 << m.biome() as u32)
+    }
+
     /// The provinces of some units, given as `[kind, id, kind, id, ...]` (kinds as in
     /// [`Unit::kind`]), ascending, each once. Unknown units are ignored.
     pub fn provinces_of_units(&self, units: &[u32]) -> Vec<u32> {

@@ -189,7 +189,28 @@ impl MapDocument {
     /// Outline of the union of `ids`, as index pairs into `linePositions`.
     #[wasm_bindgen(js_name = boundaryIndices)]
     pub fn boundary_indices(&self, ids: &[u32]) -> Vec<u32> {
-        self.0.mesh.boundary_indices(ids)
+        self.0.boundary_indices(ids)
+    }
+
+    /// Totals over some provinces: `[provinces, land, sea, pixels, population, provinces with
+    /// a population]`. Unknown ids are ignored.
+    #[wasm_bindgen(js_name = provinceStats)]
+    pub fn province_stats(&self, ids: &[u32]) -> Vec<f64> {
+        let s = self.0.province_stats(ids);
+        vec![s.provinces as f64, s.land as f64, s.sea as f64, s.pixels as f64, s.population as f64, s.populated as f64]
+    }
+
+    /// The distinct states that some provinces are in, ascending; -1 stands for "in no state".
+    #[wasm_bindgen(js_name = statesOf)]
+    pub fn states_of(&self, ids: &[u32]) -> Vec<i32> {
+        self.0.states_of(ids).into_iter().map(|s| s as i32).collect()
+    }
+
+    /// The biomes that the land provinces among `ids` have, as a bit mask: bit `i` is set for
+    /// the biome number `i` (see `biomeNames`).
+    #[wasm_bindgen(js_name = landBiomes)]
+    pub fn land_biomes(&self, ids: &[u32]) -> u32 {
+        self.0.land_biomes(ids)
     }
 
     /// The provinces that highlight together with `province` at a view level (0 provinces,

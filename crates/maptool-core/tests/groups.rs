@@ -542,3 +542,69 @@ fn a_box_over_a_big_map_is_fast() {
     }
     assert!(t.elapsed().as_millis() < 1500, "100 boxes took {:?}", t.elapsed());
 }
+
+// ------------------------------------------------- selection helpers (speed)
+
+#[test]
+fn the_fast_outline_matches_the_reference_one() {
+    for (opts, seed) in [(Options::exact(), 4u64), (Options::default(), 9)] {
+        let d = doc_from(&blobby(140, 100, 30, seed), 140, 100, &opts);
+        let mut s = 77u64;
+        for round in 0..120 {
+            let n = d.mesh.provinces.len() as u64;
+            // Random selections of very different sizes, with repeats and unknown ids mixed in.
+            let count = match round % 4 {
+                0 => 1,
+                1 => 3,
+                2 => n / 2,
+                _ => n,
+            } as usize;
+            let mut ids: Vec<u32> = (0..count).map(|_| (lcg(&mut s) % (n + 3)) as u32).collect();
+            if round % 5 == 0 {
+                ids.extend((0..n as u32).step_by(2));
+            }
+            let pairs = |v: Vec<u32>| {
+                let mut p: Vec<(u32, u32)> = v.chunks(2).map(|c| (c[0], c[1])).collect();
+                p.sort_unstable();
+                p
+            };
+            assert_eq!(pairs(d.boundary_indices(&ids)), pairs(d.mesh.boundary_indices(&ids)), "round {round}");
+        }
+    }
+    let d = grid(3, 3, 8);
+    assert!(d.boundary_indices(&[]).is_empty());
+    assert!(d.boundary_indices(&[99]).is_empty());
+}
+
+#[test]
+fn a_large_outline_is_quick() {
+    let (w, h) = (700u32, 500u32);
+    let d = doc_from(&blobby(w, h, 900, 2), w, h, &Options::default());
+    let all: Vec<u32> = (0..d.mesh.provinces.len() as u32).collect();
+    let t = std::time::Instant::now();
+    for _ in 0..20 {
+        d.boundary_indices(&all);
+    }
+    assert!(t.elapsed().as_millis() < 500, "20 outlines of everything took {:?}", t.elapsed());
+}
+
+#[test]
+fn distinct_states_and_biomes_of_a_selection() {
+    let mut d = grid(3, 2, 4);
+    let a = d.states.create("A", &[0, 1]).unwrap();
+    let b = d.states.create("B", &[2]).unwrap();
+    assert_eq!(d.states_of(&[0, 1]), vec![a as i64]);
+    assert_eq!(d.states_of(&[0, 2, 3, 3, 99]), vec![-1, a as i64, b as i64], "-1 first: some are in no state");
+    assert_eq!(d.states_of(&[4, 5]), vec![-1]);
+    assert!(d.states_of(&[]).is_empty());
+
+    d.provinces.set_biome(&[0], maptool_core::Biome::Forest).unwrap();
+    d.provinces.set_biome(&[1], maptool_core::Biome::Desert).unwrap();
+    d.provinces.set_kind(&[2], Kind::Sea).unwrap();
+    let mask = d.land_biomes(&[0, 1, 2, 3, 99]);
+    let has = |b: maptool_core::Biome| mask & 1 << b as u32 != 0;
+    assert!(has(maptool_core::Biome::Forest) && has(maptool_core::Biome::Desert) && has(maptool_core::Biome::Plains));
+    assert!(!has(maptool_core::Biome::Sea), "sea provinces are not counted");
+    assert_eq!(d.land_biomes(&[2]), 0, "only a sea province");
+    assert_eq!(d.land_biomes(&[]), 0);
+}

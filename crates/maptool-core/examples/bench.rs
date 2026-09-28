@@ -95,6 +95,20 @@ fn main() {
         found += doc.provinces_in_rect(o, o / 4.0, o + mw / 4.0, o / 4.0 + mh / 4.0, false, 0).len();
     }
     eprintln!("box selection (a quarter of the map): {:.2?} each, {} provinces on average", t.elapsed() / 100, found / 100);
+    // The outline of a large selection, recomputed by the editor as the box changes.
+    let all: Vec<u32> = (0..doc.mesh.provinces.len() as u32).collect();
+    for (label, ids) in [("a quarter of the provinces", &all[..all.len() / 4]), ("half", &all[..all.len() / 2]), ("all of them", &all[..])] {
+        let t = Instant::now();
+        let n = doc.boundary_indices(ids).len();
+        eprintln!("outline of {label}: {} segments in {:.2?}", n / 2, t.elapsed());
+    }
+    let t = Instant::now();
+    let units = doc.layer_units_of(&all, maptool_core::Level::Provinces);
+    let back = doc.provinces_of_units(&units);
+    eprintln!("units of all provinces and back: {} in {:.2?}", back.len(), t.elapsed());
+    let t = Instant::now();
+    let _ = doc.palette(maptool_core::ViewMode::Original, &all, &all);
+    eprintln!("palette with everything tinted: {:.2?}", t.elapsed());
     let t = Instant::now();
     let n = doc.border_indices(maptool_core::Level::Countries).len();
     eprintln!("country-view borders: {} segments in {:.2?}", n / 2, t.elapsed());

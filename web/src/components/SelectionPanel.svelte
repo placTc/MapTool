@@ -34,37 +34,28 @@
       color: hex(doc.color(single)),
     };
   });
-  const kinds = $derived.by(() => {
+  // Totals over the whole selection come from the document in one call each: asking about
+  // thousands of provinces one at a time was slow.
+  const typedIds = $derived(Uint32Array.from(ids));
+  const stats = $derived.by(() => {
     rev;
-    return new Set(ids.map((i) => doc.provinceKind(i)));
+    const [, land, sea, pixels, population, populated] = doc.provinceStats(typedIds);
+    return { land, sea, pixels, population, populated };
   });
+  const kinds = $derived(new Set<number>([...(stats.land > 0 ? [0] : []), ...(stats.sea > 0 ? [1] : [])]));
   const allSea = $derived(kinds.size === 1 && kinds.has(1));
   /** The biomes of the land provinces in the selection; sea provinces are locked to Sea. */
   const biomeSet = $derived.by(() => {
     rev;
-    return new Set(ids.filter((i) => doc.provinceKind(i) === 0).map((i) => doc.provinceBiome(i)));
+    const mask = doc.landBiomes(typedIds);
+    return new Set<number>(Array.from({ length: 32 }, (_, i) => i).filter((i) => mask & (1 << i)));
   });
   const stateSet = $derived.by(() => {
     rev;
-    return new Set(ids.map((i) => doc.stateOf(i)));
+    return new Set<number>(doc.statesOf(typedIds));
   });
-  const pixels = $derived.by(() => {
-    rev;
-    return ids.reduce((sum, i) => sum + doc.pixelCount(i), 0);
-  });
-  const populated = $derived.by(() => {
-    rev;
-    let total = 0;
-    let known = 0;
-    for (const i of ids) {
-      const p = doc.provincePopulation(i);
-      if (p !== undefined) {
-        total += p;
-        known++;
-      }
-    }
-    return { total, known };
-  });
+  const pixels = $derived(stats.pixels);
+  const populated = $derived({ total: stats.population, known: stats.populated });
   const states = $derived.by(() => {
     rev;
     return Array.from(doc.stateIds(), (id) => ({ id, name: doc.stateName(id) }));

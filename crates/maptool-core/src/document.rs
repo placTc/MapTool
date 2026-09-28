@@ -398,6 +398,24 @@ impl Document {
         self.filter_provinces(&self.mesh.provinces_in_rect(x0, y0, x1, y1, whole), flags)
     }
 
+    /// The provinces of some units, given as `[kind, id, kind, id, ...]` (kinds as in
+    /// [`Unit::kind`]), ascending, each once. Unknown units are ignored.
+    pub fn provinces_of_units(&self, units: &[u32]) -> Vec<u32> {
+        let mut out = Vec::new();
+        for pair in units.as_chunks::<2>().0 {
+            match pair[0] {
+                0 if (pair[1] as usize) < self.mesh.provinces.len() => out.push(pair[1]),
+                1 => out.extend(self.states.get(pair[1]).map(|s| s.provinces.iter().copied()).into_iter().flatten()),
+                2 => out.extend(self.provinces_of_group(GroupKind::Country, pair[1])),
+                3 => out.extend(self.provinces_of_group(GroupKind::Region, pair[1])),
+                _ => {}
+            }
+        }
+        out.sort_unstable();
+        out.dedup();
+        out
+    }
+
     /// Provinces that are in no state.
     pub fn unassigned_provinces(&self) -> Vec<u32> {
         (0..self.mesh.provinces.len() as u32).filter(|&p| self.states.state_of(p).is_none()).collect()

@@ -1,5 +1,5 @@
 use js_sys::{Float32Array, Uint32Array};
-use maptool_core::{Biome, Document, Kind, Options, PixelFormat, ViewMode};
+use maptool_core::{Biome, Document, GroupKind, Kind, Level, Options, PixelFormat, ViewMode};
 use wasm_bindgen::prelude::*;
 
 /// Tuning knobs. Create with `new Settings()` and assign the fields you care about.
@@ -171,18 +171,19 @@ impl MapDocument {
     }
 
     /// RGBA palette for the fills, four bytes per province. `mode` is 0 original
-    /// colors, 1 by state, 2 by type, 3 by biome. `selected` provinces are tinted
-    /// yellow and `hovered` ones white.
+    /// colors, 1 by state, 2 by type, 3 by biome, 4 by country, 5 by strategic region.
+    /// `selected` provinces are tinted yellow and `hovered` ones white.
     pub fn palette(&self, mode: u8, selected: &[u32], hovered: &[u32]) -> Result<Vec<u8>, JsError> {
         let mode = ViewMode::from_u8(mode).ok_or_else(|| js_err(format!("unknown view mode {mode}")))?;
         Ok(self.0.palette(mode, selected, hovered))
     }
 
-    /// Border segments (index pairs into `linePositions`) to draw in the state view:
-    /// every border except those between two provinces of the same state.
-    #[wasm_bindgen(js_name = stateBorderIndices)]
-    pub fn state_border_indices(&self) -> Vec<u32> {
-        self.0.state_border_indices()
+    /// Border segments (index pairs into `linePositions`) to draw at a view level (0
+    /// provinces, 1 states, 2 countries, 3 strategic regions): every border except those
+    /// between two provinces that are shown as one unit.
+    #[wasm_bindgen(js_name = borderIndices)]
+    pub fn border_indices(&self, level: u8) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.border_indices(level_of(level)?))
     }
 
     /// Outline of the union of `ids`, as index pairs into `linePositions`.
@@ -191,11 +192,46 @@ impl MapDocument {
         self.0.mesh.boundary_indices(ids)
     }
 
-    /// The provinces that highlight together with `province` in the state view:
-    /// its whole state, or just itself when it is in no state.
+    /// The provinces that highlight together with `province` at a view level (0 provinces,
+    /// 1 states, 2 countries, 3 strategic regions): everything in the unit it is shown as.
     #[wasm_bindgen(js_name = groupProvinces)]
-    pub fn group_provinces(&self, province: u32) -> Vec<u32> {
-        self.0.group_provinces(province)
+    pub fn group_provinces(&self, province: u32, level: u8) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.group_provinces(province, level_of(level)?))
+    }
+
+    /// The units, at a view level, that `provinces` belong to, as `[kind, id, kind, id, ...]`
+    /// with kind 0 province, 1 state, 2 country, 3 strategic region; each once.
+    #[wasm_bindgen(js_name = unitsOf)]
+    pub fn units_of(&self, provinces: &[u32], level: u8) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.units_of(provinces, level_of(level)?))
+    }
+
+    /// The provinces of some units given as `[kind, id, ...]` (see `unitsOf`), ascending.
+    #[wasm_bindgen(js_name = provincesOfUnits)]
+    pub fn provinces_of_units(&self, units: &[u32]) -> Vec<u32> {
+        self.0.provinces_of_units(units)
+    }
+
+    // ---- box selection
+
+    /// The provinces in the rectangle `(x0, y0)`-`(x1, y1)` (image pixels, any corner
+    /// order): those it touches, or with `whole` only those entirely inside it, then
+    /// filtered by `flags` (see `filterFlags`).
+    #[wasm_bindgen(js_name = provincesInRect)]
+    pub fn provinces_in_rect(&self, x0: f64, y0: f64, x1: f64, y1: f64, whole: bool, flags: u32) -> Vec<u32> {
+        self.0.provinces_in_rect(x0, y0, x1, y1, whole, flags)
+    }
+
+    /// The provinces of `ids` that pass `flags` (see `filterFlags`), ascending, each once.
+    #[wasm_bindgen(js_name = filterProvinces)]
+    pub fn filter_provinces(&self, ids: &[u32], flags: u32) -> Vec<u32> {
+        self.0.filter_provinces(ids, flags)
+    }
+
+    /// The provinces that are in no state.
+    #[wasm_bindgen(js_name = unassignedProvinces)]
+    pub fn unassigned_provinces(&self) -> Vec<u32> {
+        self.0.unassigned_provinces()
     }
 
     /// Triangle vertices, x and y interleaved.
@@ -403,10 +439,120 @@ impl MapDocument {
         self.0.states.set_color(id, [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]).map_err(js_err)
     }
 
-    /// Delete a state; its provinces become unassigned.
+    /// Delete a state; its provinces become unassigned, and it leaves its country and
+    /// strategic region.
     #[wasm_bindgen(js_name = deleteState)]
     pub fn delete_state(&mut self, id: u32) -> Result<(), JsError> {
-        self.0.states.delete(id).map_err(js_err)
+        self.0.delete_state(id).map_err(js_err)
+    }
+
+    #[wasm_bindgen(js_name = stateDescription)]
+    pub fn state_description(&self, id: u32) -> Result<String, JsError> {
+        Ok(self.state(id)?.description.clone())
+    }
+
+    /// Blank text clears the description.
+    #[wasm_bindgen(js_name = setStateDescription)]
+    pub fn set_state_description(&mut self, id: u32, text: &str) -> Result<(), JsError> {
+        self.0.states.set_description(id, text).map_err(js_err)
+    }
+
+    // ---- countries and strategic regions
+    //
+    // Both are groups of states, and every method takes `kind`: 0 for countries, 1 for
+    // strategic regions. A state is in at most one group of each kind.
+
+    /// Group ids in creation order.
+    #[wasm_bindgen(js_name = groupIds)]
+    pub fn group_ids(&self, kind: u8) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.groups(kind_of(kind)?).iter().map(|g| g.id).collect())
+    }
+
+    #[wasm_bindgen(js_name = groupName)]
+    pub fn group_name(&self, kind: u8, id: u32) -> Result<String, JsError> {
+        Ok(self.group(kind, id)?.name.clone())
+    }
+
+    #[wasm_bindgen(js_name = groupDescription)]
+    pub fn group_description(&self, kind: u8, id: u32) -> Result<String, JsError> {
+        Ok(self.group(kind, id)?.description.clone())
+    }
+
+    /// Group color as 0xRRGGBB.
+    #[wasm_bindgen(js_name = groupColor)]
+    pub fn group_color(&self, kind: u8, id: u32) -> Result<u32, JsError> {
+        let [r, g, b] = self.group(kind, id)?.color;
+        Ok(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+    }
+
+    /// The state ids in a group, ascending.
+    #[wasm_bindgen(js_name = groupStates)]
+    pub fn group_states(&self, kind: u8, id: u32) -> Result<Vec<u32>, JsError> {
+        Ok(self.group(kind, id)?.states.clone())
+    }
+
+    /// The id of the group holding a state, or -1.
+    #[wasm_bindgen(js_name = groupOfState)]
+    pub fn group_of_state(&self, kind: u8, state: u32) -> Result<i32, JsError> {
+        Ok(self.0.groups(kind_of(kind)?).group_of(state).map_or(-1, |g| g as i32))
+    }
+
+    /// All provinces in the states of a group, ascending.
+    #[wasm_bindgen(js_name = provincesOfGroup)]
+    pub fn provinces_of_group(&self, kind: u8, id: u32) -> Result<Vec<u32>, JsError> {
+        Ok(self.0.provinces_of_group(kind_of(kind)?, id))
+    }
+
+    /// `[states, provinces, land, sea, pixels, population, provinces with a population]`.
+    #[wasm_bindgen(js_name = groupStats)]
+    pub fn group_stats(&self, kind: u8, id: u32) -> Result<Vec<f64>, JsError> {
+        let k = kind_of(kind)?;
+        let s = self.0.group_stats(k, id).ok_or_else(|| js_err(format!("no {} {id}", k.noun())))?;
+        let states = self.group(kind, id)?.states.len();
+        Ok(vec![states as f64, s.provinces as f64, s.land as f64, s.sea as f64, s.pixels as f64, s.population as f64, s.populated as f64])
+    }
+
+    /// Create a group from `states`, taking them out of the group of this kind they were
+    /// in. Returns its id.
+    #[wasm_bindgen(js_name = createGroup)]
+    pub fn create_group(&mut self, kind: u8, name: &str, states: &[u32]) -> Result<u32, JsError> {
+        self.0.create_group(kind_of(kind)?, name, states).map_err(js_err)
+    }
+
+    /// Put `states` into a group, taking them out of the group of this kind they were in.
+    #[wasm_bindgen(js_name = assignToGroup)]
+    pub fn assign_to_group(&mut self, kind: u8, id: u32, states: &[u32]) -> Result<(), JsError> {
+        self.0.assign_to_group(kind_of(kind)?, id, states).map_err(js_err)
+    }
+
+    /// Take `states` out of their group of this kind.
+    #[wasm_bindgen(js_name = unassignFromGroups)]
+    pub fn unassign_from_groups(&mut self, kind: u8, states: &[u32]) -> Result<(), JsError> {
+        self.0.unassign_from_groups(kind_of(kind)?, states).map_err(js_err)
+    }
+
+    /// A blank name is ignored.
+    #[wasm_bindgen(js_name = renameGroup)]
+    pub fn rename_group(&mut self, kind: u8, id: u32, name: &str) -> Result<(), JsError> {
+        self.0.groups_mut(kind_of(kind)?).rename(id, name).map_err(js_err)
+    }
+
+    /// Blank text clears the description.
+    #[wasm_bindgen(js_name = setGroupDescription)]
+    pub fn set_group_description(&mut self, kind: u8, id: u32, text: &str) -> Result<(), JsError> {
+        self.0.groups_mut(kind_of(kind)?).set_description(id, text).map_err(js_err)
+    }
+
+    /// `rgb` is 0xRRGGBB.
+    #[wasm_bindgen(js_name = setGroupColor)]
+    pub fn set_group_color(&mut self, kind: u8, id: u32, rgb: u32) -> Result<(), JsError> {
+        self.0.groups_mut(kind_of(kind)?).set_color(id, [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]).map_err(js_err)
+    }
+
+    /// Delete a group; its states become ungrouped.
+    #[wasm_bindgen(js_name = deleteGroup)]
+    pub fn delete_group(&mut self, kind: u8, id: u32) -> Result<(), JsError> {
+        self.0.groups_mut(kind_of(kind)?).delete(id).map_err(js_err)
     }
 
     // ---- saving
@@ -437,6 +583,26 @@ impl MapDocument {
     fn state(&self, id: u32) -> Result<&maptool_core::State, JsError> {
         self.0.states.get(id).ok_or_else(|| js_err(format!("no state {id}")))
     }
+
+    fn group(&self, kind: u8, id: u32) -> Result<&maptool_core::Group, JsError> {
+        let k = kind_of(kind)?;
+        self.0.groups(k).get(id).ok_or_else(|| js_err(format!("no {} {id}", k.noun())))
+    }
+}
+
+fn level_of(level: u8) -> Result<Level, JsError> {
+    Level::from_u8(level).ok_or_else(|| js_err(format!("unknown view level {level}")))
+}
+
+fn kind_of(kind: u8) -> Result<GroupKind, JsError> {
+    GroupKind::from_u8(kind).ok_or_else(|| js_err(format!("unknown group kind {kind}")))
+}
+
+/// The bits that `provincesInRect` and `filterProvinces` take: `[skip provinces already
+/// in a state, land only, sea only]`.
+#[wasm_bindgen(js_name = filterFlags)]
+pub fn filter_flags() -> Vec<u32> {
+    vec![maptool_core::filter::SKIP_IN_STATES, maptool_core::filter::LAND_ONLY, maptool_core::filter::SEA_ONLY]
 }
 
 /// What a CSV import did.

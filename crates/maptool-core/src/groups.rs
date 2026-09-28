@@ -183,10 +183,10 @@ impl GroupSet {
     /// Forget a state, whichever group has it (used when the state itself is deleted).
     /// Does nothing if it is in none.
     pub fn remove_state(&mut self, state: u32) {
-        if let Some(old) = self.of_state.remove(&state) {
-            if let Some(g) = self.groups.iter_mut().find(|g| g.id == old) {
-                g.states.retain(|&s| s != state);
-            }
+        if let Some(old) = self.of_state.remove(&state)
+            && let Some(g) = self.groups.iter_mut().find(|g| g.id == old)
+        {
+            g.states.retain(|&s| s != state);
         }
     }
 

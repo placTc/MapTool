@@ -18,7 +18,9 @@ use crate::{Error, MapMesh, ProvinceTable, StateSet};
 
 const MAGIC: &[u8; 4] = b"MTMP";
 const FORMAT_VERSION: u32 = 1;
-const EDITS_VERSION: u32 = 1;
+/// Edits version 1 had no map name, and stored the province data to the end.
+const EDITS_VERSION: u32 = 2;
+const MAX_MAP_NAME_CHARS: usize = 100;
 
 /// Whether `bytes` look like a saved map (as opposed to an image file).
 pub fn is_map_file(bytes: &[u8]) -> bool {
@@ -85,6 +87,8 @@ pub struct Document {
     pub mesh: MapMesh,
     pub states: StateSet,
     pub provinces: ProvinceTable,
+    /// The map's own name; empty when it has none. Saved with the edits.
+    name: String,
     /// For every border segment (a pair in `mesh.line_indices`): the province it
     /// belongs to, and the province on its other side (`NO_PROVINCE` at the image
     /// edge). Derived from the mesh, never saved.
@@ -146,7 +150,17 @@ impl Document {
     pub fn new(mesh: MapMesh) -> Document {
         let n = mesh.provinces.len();
         let (segment_province, segment_mate) = segment_owners(&mesh);
-        Document { mesh, states: StateSet::new(n), provinces: ProvinceTable::new(n), segment_province, segment_mate }
+        Document { mesh, states: StateSet::new(n), provinces: ProvinceTable::new(n), name: String::new(), segment_province, segment_mate }
+    }
+
+    /// The map's name, or an empty string when it has none.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// Name the map. Blank clears it; long names are cut.
+    pub fn set_name(&mut self, name: &str) {
+        self.name = name.trim().chars().take(MAX_MAP_NAME_CHARS).collect();
     }
 
     /// What `province` is grouped with in the state view: its state, or itself if it
@@ -218,7 +232,7 @@ impl Document {
                     match (meta.kind, mode) {
                         (Kind::Sea, _) => SEA,
                         (Kind::Land, ViewMode::Type) => LAND,
-                        (Kind::Land, _) => meta.biome.color(),
+                        (Kind::Land, _) => meta.biome().color(),
                     }
                 }
             })
@@ -233,30 +247,54 @@ impl Document {
         colors.iter().flat_map(|c| [c[0], c[1], c[2], 255]).collect()
     }
 
-    /// The states and province metadata, without the mesh.
+    /// The map name, states and province metadata, without the mesh.
+    ///
+    ///   version, states length, states, province data length, province data,
+    ///   name length, name (UTF-8)                              u32 lengths
     pub fn edits_to_bytes(&self) -> Vec<u8> {
         let states = self.states.to_bytes();
-        let mut out = Vec::with_capacity(8 + states.len());
+        let provinces = self.provinces.to_bytes();
+        let mut out = Vec::with_capacity(16 + states.len() + provinces.len() + self.name.len());
         out.extend_from_slice(&EDITS_VERSION.to_le_bytes());
         out.extend_from_slice(&(states.len() as u32).to_le_bytes());
         out.extend_from_slice(&states);
-        out.extend_from_slice(&self.provinces.to_bytes());
+        out.extend_from_slice(&(provinces.len() as u32).to_le_bytes());
+        out.extend_from_slice(&provinces);
+        out.extend_from_slice(&(self.name.len() as u32).to_le_bytes());
+        out.extend_from_slice(self.name.as_bytes());
         out
     }
 
-    /// Replace the states and province metadata. Nothing changes if `bytes` are invalid.
+    /// Replace the name, states and province metadata. Nothing changes if `bytes`
+    /// are invalid. Edits saved before maps had names (version 1) still load, and
+    /// leave the map unnamed.
     pub fn set_edits_from_bytes(&mut self, bytes: &[u8]) -> Result<(), Error> {
         let n = self.mesh.provinces.len();
         let mut r = Reader { data: bytes, pos: 0 };
         let version = r.u32()?;
-        if version != EDITS_VERSION {
-            return Err(bad(format!("edits version {version}, this build reads version {EDITS_VERSION}")));
+        if version != 1 && version != EDITS_VERSION {
+            return Err(bad(format!("edits version {version}, this build reads versions 1 and {EDITS_VERSION}")));
         }
         let states_len = r.u32()? as usize;
         let states = StateSet::from_bytes(r.take(states_len)?, n)?;
-        let provinces = ProvinceTable::from_bytes(&bytes[r.pos..], n)?;
+        let (provinces, name) = if version == 1 {
+            (ProvinceTable::from_bytes(&bytes[r.pos..], n)?, String::new())
+        } else {
+            let len = r.u32()? as usize;
+            let provinces = ProvinceTable::from_bytes(r.take(len)?, n)?;
+            let name_len = r.u32()? as usize;
+            let name = std::str::from_utf8(r.take(name_len)?).map_err(|_| bad("the map name is not valid UTF-8"))?.to_string();
+            if r.pos != bytes.len() {
+                return Err(bad("unexpected trailing data"));
+            }
+            if name.chars().count() > MAX_MAP_NAME_CHARS {
+                return Err(bad("the map name is too long"));
+            }
+            (provinces, name)
+        };
         self.states = states;
         self.provinces = provinces;
+        self.name = name;
         Ok(())
     }
 

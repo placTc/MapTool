@@ -117,7 +117,7 @@ export async function loadRecent(id: string): Promise<{ file: Uint8Array; edits?
 }
 
 /** Save the latest edits of a stored map. Small, so it is cheap to call after every change. */
-export async function saveEdits(id: string, edits: Uint8Array, states: number): Promise<void> {
+export async function saveEdits(id: string, edits: Uint8Array, states: number, name: string): Promise<void> {
   const db = await open();
   const tx = db.transaction(['meta', 'edits'], 'readwrite');
   const metas = tx.objectStore('meta');
@@ -126,7 +126,7 @@ export async function saveEdits(id: string, edits: Uint8Array, states: number): 
     tx.abort();
     return;
   }
-  metas.put({ ...meta, savedAt: Date.now(), states });
+  metas.put({ ...meta, savedAt: Date.now(), states, name });
   tx.objectStore('edits').put(blob(edits), id);
   await done(tx);
 }

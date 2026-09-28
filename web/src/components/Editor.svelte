@@ -90,6 +90,12 @@
     };
   });
 
+  /** The map's own name; the file's name (`name`) stands in until it has one. */
+  const mapName = $derived.by(() => {
+    rev;
+    return doc.mapName;
+  });
+
   // ---- Drawing
   let canvasEl = $state<HTMLCanvasElement>();
   let stageEl = $state<HTMLElement>();
@@ -320,7 +326,17 @@
 <div class="editor">
   <header>
     <button class="secondary" onclick={onclose} title="Back to the start screen">← Maps</button>
-    <strong class="name" title={name}>{name}</strong>
+    <input
+      class="title"
+      type="text"
+      aria-label="Map name"
+      title="Click to rename the map"
+      placeholder={name}
+      value={mapName}
+      onchange={(e) => mutate(() => doc.setMapName(e.currentTarget.value))}
+      onfocus={(e) => e.currentTarget.select()}
+      onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
+    />
 
     <div class="seg" role="group" aria-label="View">
       <button class:on={viewKind === 'provinces'} onclick={() => setView('provinces')}>Provinces</button>
@@ -403,11 +419,20 @@
     border-bottom: 1px solid #2c3038;
     flex-wrap: wrap;
   }
-  .name {
-    max-width: 240px;
-    overflow: hidden;
-    text-overflow: ellipsis;
-    white-space: nowrap;
+  .title {
+    width: 200px;
+    background: transparent;
+    color: inherit;
+    border: 1px solid transparent;
+    border-radius: 4px;
+    padding: 4px 7px;
+    font: inherit;
+    font-weight: 600;
+  }
+  .title:hover,
+  .title:focus {
+    border-color: #363b45;
+    background: #14161a;
   }
   .status {
     margin-left: auto;

@@ -14,7 +14,8 @@
   }
   let { doc, rev, ids, mutate, onclear, oncreated }: Props = $props();
 
-  const biomes = biomeList();
+  // The last biome is Sea: only sea provinces have it, and it cannot be picked.
+  const landBiomes = biomeList().slice(0, -1);
   const typed = () => Uint32Array.from(ids);
 
   const single = $derived(ids.length === 1 ? ids[0] : null);
@@ -22,9 +23,11 @@
     rev;
     return new Set(ids.map((i) => doc.provinceKind(i)));
   });
+  const allSea = $derived(kinds.size === 1 && kinds.has(1));
+  /** The biomes of the land provinces in the selection; sea provinces are locked to Sea. */
   const biomeSet = $derived.by(() => {
     rev;
-    return new Set(ids.map((i) => doc.provinceBiome(i)));
+    return new Set(ids.filter((i) => doc.provinceKind(i) === 0).map((i) => doc.provinceBiome(i)));
   });
   const stateSet = $derived.by(() => {
     rev;
@@ -133,14 +136,19 @@
 
   <div class="row">
     <span class="label">Biome</span>
-    <select
-      value={biomeSet.size === 1 ? String([...biomeSet][0]) : ''}
-      onchange={(e) => mutate(() => doc.setBiome(typed(), Number(e.currentTarget.value)))}
-    >
-      {#if biomeSet.size > 1}<option value="" disabled>mixed</option>{/if}
-      {#each biomes as b, i}<option value={String(i)}>{b}</option>{/each}
-    </select>
-    {#if kinds.size === 1 && kinds.has(1)}<small>ignored for sea</small>{/if}
+    {#if allSea}
+      <select disabled title="Sea provinces always have the Sea biome"><option>Sea</option></select>
+      <small>locked for sea</small>
+    {:else}
+      <select
+        value={biomeSet.size === 1 ? String([...biomeSet][0]) : ''}
+        onchange={(e) => mutate(() => doc.setBiome(typed(), Number(e.currentTarget.value)))}
+      >
+        {#if biomeSet.size > 1}<option value="" disabled>mixed</option>{/if}
+        {#each landBiomes as b, i}<option value={String(i)}>{b}</option>{/each}
+      </select>
+      {#if kinds.size > 1}<small>sea provinces stay Sea</small>{/if}
+    {/if}
   </div>
 
   <div class="row"><span class="label">State</span><span>{stateLabel}</span></div>

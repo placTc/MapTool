@@ -226,6 +226,20 @@ impl MapDocument {
         unsafe { Uint32Array::view(&self.0.mesh.line_indices) }
     }
 
+    // ---- the map's name
+
+    /// The map's name, or an empty string when it has none.
+    #[wasm_bindgen(getter, js_name = mapName)]
+    pub fn map_name(&self) -> String {
+        self.0.name().to_string()
+    }
+
+    /// Name the map. Blank clears it. The name is saved with the edits and the file.
+    #[wasm_bindgen(js_name = setMapName)]
+    pub fn set_map_name(&mut self, name: &str) {
+        self.0.set_name(name);
+    }
+
     // ---- province metadata
 
     /// The province's name, or its number when it has none.
@@ -251,10 +265,10 @@ impl MapDocument {
         self.0.provinces.get(id).map_or(0, |m| m.kind as u8)
     }
 
-    /// Index into `biomeNames()`.
+    /// Index into `biomeNames()`. Always the last one (Sea) for a sea province.
     #[wasm_bindgen(js_name = provinceBiome)]
     pub fn province_biome(&self, id: u32) -> u8 {
-        self.0.provinces.get(id).map_or(0, |m| m.biome as u8)
+        self.0.provinces.get(id).map_or(0, |m| m.biome() as u8)
     }
 
     /// The population, or undefined when it is not set.
@@ -292,7 +306,9 @@ impl MapDocument {
         self.0.provinces.set_kind(ids, kind).map_err(js_err)
     }
 
-    /// Set the biome (an index into `biomeNames()`) on several provinces at once.
+    /// Set the biome (an index into `biomeNames()`) of the land provinces among `ids`.
+    /// Sea provinces are skipped: their biome is locked to Sea. Sea itself cannot be
+    /// chosen; a province gets it by being made sea with `setKind`.
     #[wasm_bindgen(js_name = setBiome)]
     pub fn set_biome(&mut self, ids: &[u32], biome: u8) -> Result<(), JsError> {
         let biome = Biome::from_u8(biome).ok_or_else(|| js_err(format!("unknown biome {biome}")))?;
@@ -408,7 +424,8 @@ impl MapDocument {
     }
 }
 
-/// Names of the biomes, in the order `setBiome` and `provinceBiome` number them.
+/// Names of the biomes, in the order `setBiome` and `provinceBiome` number them. The
+/// last one is Sea, which only sea provinces have.
 #[wasm_bindgen(js_name = biomeNames)]
 pub fn biome_names() -> Vec<String> {
     maptool_core::biome_names().into_iter().map(String::from).collect()

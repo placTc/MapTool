@@ -24,8 +24,12 @@ impl Kind {
     }
 }
 
-/// Land biomes. The numeric codes are part of the file format: never reorder or
-/// reuse them, only append. Sea provinces ignore their biome.
+/// Biomes. The numeric codes are part of the file format: never reorder or reuse
+/// them, only append.
+///
+/// `Sea` is not a choice: a sea province's biome is always `Sea`, and only sea
+/// provinces have it. A province's land biome is kept underneath, so turning a
+/// province into sea and back restores it.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 #[repr(u8)]
 pub enum Biome {
@@ -39,10 +43,12 @@ pub enum Biome {
     Steppe = 7,
     Tundra = 8,
     Arctic = 9,
+    Sea = 10,
 }
 
 impl Biome {
-    pub const ALL: [Biome; 10] = [
+    /// Every biome, in code order. The last one is `Sea`.
+    pub const ALL: [Biome; 11] = [
         Biome::Plains,
         Biome::Forest,
         Biome::Jungle,
@@ -53,6 +59,7 @@ impl Biome {
         Biome::Steppe,
         Biome::Tundra,
         Biome::Arctic,
+        Biome::Sea,
     ];
 
     pub fn from_u8(v: u8) -> Option<Biome> {
@@ -71,6 +78,7 @@ impl Biome {
             Biome::Steppe => "Steppe",
             Biome::Tundra => "Tundra",
             Biome::Arctic => "Arctic",
+            Biome::Sea => "Sea",
         }
     }
 
@@ -87,6 +95,7 @@ impl Biome {
             Biome::Steppe => [196, 184, 104],
             Biome::Tundra => [170, 190, 176],
             Biome::Arctic => [232, 240, 246],
+            Biome::Sea => [58, 108, 168],
         }
     }
 }
@@ -97,13 +106,22 @@ pub struct ProvinceMeta {
     pub name: Option<String>,
     pub description: Option<String>,
     pub kind: Kind,
-    pub biome: Biome,
+    /// The biome it has as land. Kept while the province is sea, so making it land
+    /// again brings it back; read the real biome through [`ProvinceMeta::biome`].
+    land_biome: Biome,
     pub population: Option<u64>,
+}
+
+impl ProvinceMeta {
+    /// `Sea` for a sea province, otherwise its land biome.
+    pub fn biome(&self) -> Biome {
+        if self.kind == Kind::Sea { Biome::Sea } else { self.land_biome }
+    }
 }
 
 impl Default for ProvinceMeta {
     fn default() -> Self {
-        ProvinceMeta { name: None, description: None, kind: Kind::Land, biome: Biome::Plains, population: None }
+        ProvinceMeta { name: None, description: None, kind: Kind::Land, land_biome: Biome::Plains, population: None }
     }
 }
 
@@ -190,10 +208,19 @@ impl ProvinceTable {
         Ok(())
     }
 
+    /// Set the biome of the land provinces among `ids`. Sea provinces are skipped:
+    /// their biome is locked to `Sea`. `Sea` itself cannot be chosen; make the
+    /// province sea instead.
     pub fn set_biome(&mut self, ids: &[u32], biome: Biome) -> Result<(), Error> {
+        if biome == Biome::Sea {
+            return Err(invalid("a province gets the Sea biome by being made sea"));
+        }
         self.check(ids)?;
         for &i in ids {
-            self.items[i as usize].biome = biome;
+            let m = &mut self.items[i as usize];
+            if m.kind == Kind::Land {
+                m.land_biome = biome;
+            }
         }
         Ok(())
     }
@@ -201,7 +228,7 @@ impl ProvinceTable {
     // ---------------------------------------------------------------- saving
     //
     //   version, province count                                  2 x u32
-    //   per province: kind, biome, flags, 0                      4 x u8
+    //   per province: kind, land biome, flags, 0                 4 x u8
     //     flags: 1 = name, 2 = description, 4 = population
     //     then, in that order: name (u32 length + UTF-8), description
     //     (same), population (u64)
@@ -212,7 +239,7 @@ impl ProvinceTable {
         out.extend_from_slice(&(self.items.len() as u32).to_le_bytes());
         for m in &self.items {
             let flags = m.name.is_some() as u8 | (m.description.is_some() as u8) << 1 | (m.population.is_some() as u8) << 2;
-            out.extend_from_slice(&[m.kind as u8, m.biome as u8, flags, 0]);
+            out.extend_from_slice(&[m.kind as u8, m.land_biome as u8, flags, 0]);
             if let Some(n) = &m.name {
                 put_text(&mut out, n);
             }
@@ -245,11 +272,17 @@ impl ProvinceTable {
                 return Err(bad("unknown province data flags"));
             }
             let kind = Kind::from_u8(kind).ok_or_else(|| bad("unknown province type"))?;
-            let biome = Biome::from_u8(biome).ok_or_else(|| bad("unknown biome"))?;
+            let mut land_biome = Biome::from_u8(biome).ok_or_else(|| bad("unknown biome"))?;
+            if land_biome == Biome::Sea {
+                if kind == Kind::Land {
+                    return Err(bad("a land province cannot have the Sea biome"));
+                }
+                land_biome = Biome::Plains; // a sea province; its land biome was never recorded
+            }
             let name = if flags & 1 != 0 { Some(read_text(&mut r)?) } else { None };
             let description = if flags & 2 != 0 { Some(read_text(&mut r)?) } else { None };
             let population = if flags & 4 != 0 { Some(u64::from_le_bytes(r.take(8)?.try_into().unwrap())) } else { None };
-            items.push(ProvinceMeta { name, description, kind, biome, population });
+            items.push(ProvinceMeta { name, description, kind, land_biome, population });
         }
         if r.pos != bytes.len() {
             return Err(bad("unexpected trailing data"));

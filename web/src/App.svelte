@@ -68,6 +68,8 @@
   // ---- Opening
   const yieldToPaint = () => new Promise((r) => setTimeout(r));
   const nameOf = (file: string) => file.replace(/\.[^.]+$/, '') || 'Map';
+  /** A name that is safe to use as a file name. */
+  const fileSafe = (name: string) => name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'Map';
 
   /** Swap in a new document, saving and releasing the one that was open. */
   async function show(next: MapDocument, name: string, id: string) {
@@ -101,18 +103,21 @@
         await yieldToPaint();
         const opened = await openMapBytes(saved.file, { tolerance, validate });
         if (saved.edits) opened.setEditsBytes(saved.edits);
+        if (!opened.mapName) opened.setMapName(saved.meta.name);
         pending = null;
         stored = true;
-        await show(opened, saved.meta.name, id);
+        await show(opened, opened.mapName, id);
         store.touch(id).catch(() => {});
         editorStatus = `Opened your saved copy (${Math.round(loadTimings.wasmMs)} ms)`;
       } else {
         status = isMap ? 'Opening…' : 'Building the map…';
         await yieldToPaint();
         const opened = await openMapBytes(bytes, { tolerance, validate });
-        pending = { id, name, file: isMap ? bytes : null };
+        // A new image is named after its file; a saved map keeps the name it was given.
+        if (!opened.mapName) opened.setMapName(name);
+        pending = { id, name: opened.mapName, file: isMap ? bytes : null };
         stored = false;
-        await show(opened, name, id);
+        await show(opened, opened.mapName, id);
         editorStatus = `${opened.width}×${opened.height}, ${opened.len.toLocaleString()} provinces (${Math.round(loadTimings.wasmMs)} ms)`;
       }
       status = '';
@@ -140,9 +145,10 @@
           note = ` — its latest edits could not be read (${message(e)})`;
         }
       }
+      if (!opened.mapName) opened.setMapName(saved.meta.name);
       pending = null;
       stored = true;
-      await show(opened, saved.meta.name, id);
+      await show(opened, opened.mapName, id);
       store.touch(id).catch(() => {});
       editorStatus = `${Math.round(loadTimings.wasmMs)} ms${note}`;
       status = '';
@@ -192,7 +198,7 @@
     if (!dirty || !doc || !stored) return;
     dirty = false;
     try {
-      await store.saveEdits(mapId, doc.editsBytes(), doc.stateCount);
+      await store.saveEdits(mapId, doc.editsBytes(), doc.stateCount, doc.mapName || mapName);
       editorStatus = 'All changes saved';
     } catch (e) {
       dirty = true;
@@ -222,7 +228,7 @@
   }
 
   function downloadCurrent() {
-    if (doc) saveFile(doc.toBytes(), `${mapName}.maptool`);
+    if (doc) saveFile(doc.toBytes(), `${fileSafe(doc.mapName || mapName)}.maptool`);
   }
 
   async function downloadRecent(id: string) {
@@ -233,7 +239,7 @@
       const d = await openMapBytes(saved.file, { tolerance, validate });
       try {
         if (saved.edits) d.setEditsBytes(saved.edits);
-        saveFile(d.toBytes(), `${saved.meta.name}.maptool`);
+        saveFile(d.toBytes(), `${fileSafe(d.mapName || saved.meta.name)}.maptool`);
       } finally {
         d.free();
       }

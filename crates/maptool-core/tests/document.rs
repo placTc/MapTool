@@ -168,7 +168,7 @@ fn damaged_states_are_rejected_without_panicking() {
 fn provinces_start_as_unnamed_land() {
     let doc = grid(2, 2, 4, &exact());
     let m = doc.provinces.get(3).unwrap();
-    assert_eq!((m.name.clone(), m.description.clone(), m.kind, m.biome, m.population), (None, None, Kind::Land, Biome::Plains, None));
+    assert_eq!((m.name.clone(), m.description.clone(), m.kind, m.biome(), m.population), (None, None, Kind::Land, Biome::Plains, None));
     assert_eq!(doc.provinces.display_name(3), "3");
 }
 
@@ -193,8 +193,8 @@ fn editing_province_metadata() {
     t.set_biome(&[1, 2], Biome::Mountains).unwrap();
     assert_eq!(t.get(0).unwrap().kind, Kind::Sea);
     assert_eq!(t.get(1).unwrap().kind, Kind::Land);
-    assert_eq!(t.get(1).unwrap().biome, Biome::Mountains);
-    assert_eq!(t.get(0).unwrap().biome, Biome::Plains);
+    assert_eq!(t.get(1).unwrap().biome(), Biome::Mountains);
+    assert_eq!(t.get(0).unwrap().biome(), Biome::Sea, "a sea province's biome is Sea");
 
     assert!(t.set_kind(&[0, 9], Kind::Sea).is_err());
     assert_eq!(t.get(0).unwrap().kind, Kind::Sea, "a refused bulk edit changes nothing");
@@ -446,4 +446,138 @@ fn palette_modes() {
     assert_ne!(color_of(&tinted, 1), color_of(&base, 1));
     assert_eq!(color_of(&tinted, 2), color_of(&base, 2));
     assert_eq!(doc.palette(ViewMode::Original, &[99], &[99]), base, "unknown ids are ignored");
+}
+
+// ------------------------------------------------------------ the Sea biome
+
+#[test]
+fn sea_provinces_are_locked_to_the_sea_biome() {
+    let mut doc = grid(3, 1, 4, &exact());
+    let t = &mut doc.provinces;
+    t.set_biome(&[0, 1], Biome::Forest).unwrap();
+    t.set_kind(&[0], Kind::Sea).unwrap();
+    assert_eq!(t.get(0).unwrap().biome(), Biome::Sea);
+    assert_eq!(t.get(1).unwrap().biome(), Biome::Forest);
+
+    // A biome edit reaches the land provinces of a selection and skips the sea ones.
+    t.set_biome(&[0, 1, 2], Biome::Desert).unwrap();
+    assert_eq!(t.get(0).unwrap().biome(), Biome::Sea);
+    assert_eq!(t.get(1).unwrap().biome(), Biome::Desert);
+    assert_eq!(t.get(2).unwrap().biome(), Biome::Desert);
+
+    // Sea is not a choice: a province becomes Sea by being made sea.
+    let before = t.clone();
+    assert!(matches!(t.set_biome(&[1], Biome::Sea), Err(Error::Edit(_))));
+    assert_eq!(*t, before);
+
+    // Making it land again brings back the biome it had, not one applied while it was sea.
+    t.set_kind(&[0], Kind::Land).unwrap();
+    assert_eq!(t.get(0).unwrap().biome(), Biome::Forest);
+}
+
+#[test]
+fn only_sea_provinces_have_the_sea_biome() {
+    let names = maptool_core::biome_names();
+    assert_eq!(names.len(), 11);
+    assert_eq!(names[10], "Sea");
+    assert!(Biome::ALL[..10].iter().all(|b| *b != Biome::Sea));
+
+    let mut doc = grid(2, 1, 4, &exact());
+    doc.provinces.set_kind(&[1], Kind::Sea).unwrap();
+    let p = doc.palette(ViewMode::Biome, &[], &[]);
+    assert_eq!(color_of(&p, 1), Biome::Sea.color());
+    assert_eq!(color_of(&p, 0), Biome::Plains.color());
+}
+
+#[test]
+fn the_sea_lock_survives_saving_and_older_data() {
+    let mut doc = grid(2, 1, 4, &exact());
+    doc.provinces.set_biome(&[0], Biome::Forest).unwrap();
+    doc.provinces.set_kind(&[0], Kind::Sea).unwrap();
+    let back = maptool_core::ProvinceTable::from_bytes(&doc.provinces.to_bytes(), 2).unwrap();
+    assert_eq!(back, doc.provinces);
+    let mut back = back;
+    back.set_kind(&[0], Kind::Land).unwrap();
+    assert_eq!(back.get(0).unwrap().biome(), Biome::Forest, "the hidden land biome was saved too");
+
+    // Data written before the Sea biome existed: a sea province with an ordinary biome byte.
+    let mut old = doc.provinces.to_bytes();
+    old[8 + 1] = Biome::Hills as u8; // province 0: kind Sea, biome byte Hills
+    let loaded = maptool_core::ProvinceTable::from_bytes(&old, 2).unwrap();
+    assert_eq!(loaded.get(0).unwrap().biome(), Biome::Sea);
+
+    // A land province can never carry the Sea biome, whatever the bytes say.
+    let mut bad = doc.provinces.to_bytes();
+    bad[8 + 4 + 1] = Biome::Sea as u8; // province 1 is land
+    assert!(maptool_core::ProvinceTable::from_bytes(&bad, 2).is_err());
+    // A sea province with the Sea code is tolerated and gets a default land biome.
+    let mut sea = doc.provinces.to_bytes();
+    sea[8 + 1] = Biome::Sea as u8;
+    let loaded = maptool_core::ProvinceTable::from_bytes(&sea, 2).unwrap();
+    assert_eq!(loaded.get(0).unwrap().biome(), Biome::Sea);
+}
+
+// ---------------------------------------------------------------- map name
+
+#[test]
+fn a_map_can_be_named() {
+    let mut doc = grid(2, 1, 4, &exact());
+    assert_eq!(doc.name(), "");
+    doc.set_name("  Europe 1444  ");
+    assert_eq!(doc.name(), "Europe 1444");
+    doc.set_name(&"x".repeat(500));
+    assert_eq!(doc.name().chars().count(), 100);
+    doc.set_name("   ");
+    assert_eq!(doc.name(), "", "blank clears the name");
+}
+
+#[test]
+fn the_map_name_is_saved_with_the_edits_and_the_file() {
+    let mut doc = edited_document();
+    doc.set_name("Ærø & Fanø — map");
+    assert_eq!(Document::from_bytes(&doc.to_bytes()).unwrap(), doc);
+
+    let mut fresh = Document::new(doc.mesh.clone());
+    fresh.set_edits_from_bytes(&doc.edits_to_bytes()).unwrap();
+    assert_eq!(fresh.name(), "Ærø & Fanø — map");
+    assert_eq!(fresh, doc);
+}
+
+#[test]
+fn edits_saved_before_maps_had_names_still_load() {
+    let doc = edited_document();
+    // Version 1: version, states length, states, then the province data to the end.
+    let states = doc.states.to_bytes();
+    let mut v1 = 1u32.to_le_bytes().to_vec();
+    v1.extend((states.len() as u32).to_le_bytes());
+    v1.extend(&states);
+    v1.extend(doc.provinces.to_bytes());
+
+    let mut fresh = Document::new(doc.mesh.clone());
+    fresh.set_name("kept?");
+    fresh.set_edits_from_bytes(&v1).unwrap();
+    assert_eq!(fresh.name(), "", "old edits carry no name");
+    assert_eq!(fresh.states, doc.states);
+    assert_eq!(fresh.provinces, doc.provinces);
+}
+
+#[test]
+fn damaged_edits_with_a_name_are_rejected() {
+    let mut doc = edited_document();
+    doc.set_name("Some name");
+    let good = doc.edits_to_bytes();
+    let mut target = Document::new(doc.mesh.clone());
+    for len in 0..good.len() {
+        assert!(target.set_edits_from_bytes(&good[..len]).is_err(), "truncated to {len}");
+    }
+    let mut extra = good.clone();
+    extra.push(0);
+    assert!(target.set_edits_from_bytes(&extra).is_err(), "trailing data");
+    for i in 0..good.len() {
+        let mut bad = good.clone();
+        bad[i] ^= 0x40;
+        let _ = target.set_edits_from_bytes(&bad); // must not panic
+    }
+    assert!(target.set_edits_from_bytes(&good).is_ok());
+    assert_eq!(target.name(), "Some name");
 }

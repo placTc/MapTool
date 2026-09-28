@@ -1,0 +1,15 @@
+/* Color tokens used 4+ times across the app (plus --color-selected, used for the selection
+   highlight everywhere it appears even though it's only 3 sites) so the source of a color is
+   this file, not a hex literal copy-pasted into every component. Colors used once or twice stay
+   local to the component that needs them. */
+:root {
+  --color-bg: #14161a;
+  --color-bg-inset: #1d2026;
+  --color-surface: #363b45;
+  --color-border: #2c3038;
+  --color-text: #e6e8eb;
+  --color-text-muted: #9aa3ad;
+  --color-accent: #2f6fed;
+  --color-selected: #ffd400;
+  --color-danger: #8a2f2f;
+}

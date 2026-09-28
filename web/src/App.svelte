@@ -307,12 +307,6 @@
 </main>
 
 <style>
-  :global(body) {
-    margin: 0;
-    font: 14px/1.4 system-ui, sans-serif;
-    background: #14161a;
-    color: #e6e8eb;
-  }
   main {
     height: 100vh;
   }

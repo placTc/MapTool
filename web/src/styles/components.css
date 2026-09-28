@@ -1,0 +1,40 @@
+/* Shared "looks like a button" base + color variants. Padding is hand-tuned per panel (it isn't
+   the same everywhere) and stays in that panel's own <style> block; only what's genuinely
+   identical everywhere — border, radius, cursor, font, the disabled look, and the
+   primary/secondary/danger colors — lives here. Named .btn* rather than .button to avoid
+   colliding with the unrelated "label styled to look clickable" .button class a couple of panels
+   already have for a hidden file input.
+   A panel with its own more specific color rule (an active/toggled state, say) still wins over
+   .btn-secondary/.btn-primary here: Svelte scopes a component's own <style> rules, which raises
+   their specificity above a plain global class. */
+.btn {
+  border: 0;
+  border-radius: 4px;
+  cursor: pointer;
+  font: inherit;
+  color: inherit;
+}
+.btn:disabled {
+  opacity: 0.5;
+  cursor: default;
+}
+.btn-primary {
+  background: var(--color-accent);
+  color: white;
+}
+.btn-secondary {
+  background: var(--color-surface);
+}
+.btn-danger:hover:not(:disabled) {
+  background: var(--color-danger);
+}
+
+/* A muted, small hint/help line. A panel that needs extra spacing around it (a bar at the bottom
+   of a sidebar, say) layers its own class on top rather than redeclaring `.hint` itself: this
+   class is global (not Svelte-scoped), so a same-named scoped rule in a component would fight it
+   on specificity instead of adding to it. */
+.hint {
+  margin: 0;
+  color: var(--color-text-muted);
+  font-size: 12px;
+}

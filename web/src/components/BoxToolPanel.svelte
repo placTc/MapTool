@@ -66,14 +66,14 @@
 
   <div class="actions">
     {#if layer === 'provinces'}
-      <button onclick={ondeselectinstates} disabled={!hasSelection} title="Take every province that is already in a state out of the selection">
+      <button class="btn btn-secondary" onclick={ondeselectinstates} disabled={!hasSelection} title="Take every province that is already in a state out of the selection">
         Deselect provinces already in states
       </button>
-      <button onclick={onselectunassigned} title="Select every province that is in no state">Select all unassigned provinces</button>
+      <button class="btn btn-secondary" onclick={onselectunassigned} title="Select every province that is in no state">Select all unassigned provinces</button>
     {/if}
-    <button onclick={onselectall}>Select all {noun}</button>
-    <button onclick={oninvert} title="Select the {noun} that are not selected, and the other way round">Invert selection</button>
-    <button onclick={onclear} disabled={!hasSelection}>Clear selection</button>
+    <button class="btn btn-secondary" onclick={onselectall}>Select all {noun}</button>
+    <button class="btn btn-secondary" onclick={oninvert} title="Select the {noun} that are not selected, and the other way round">Invert selection</button>
+    <button class="btn btn-secondary" onclick={onclear} disabled={!hasSelection}>Clear selection</button>
   </div>
 </section>
 
@@ -87,11 +87,6 @@
   h2 {
     font-size: 14px;
     margin: 0;
-  }
-  .hint {
-    margin: 0;
-    color: #9aa3ad;
-    font-size: 12px;
   }
   kbd {
     background: #363b45;
@@ -131,17 +126,7 @@
     gap: 6px;
   }
   button {
-    background: #363b45;
-    color: inherit;
-    border: 0;
-    border-radius: 4px;
     padding: 6px 10px;
-    cursor: pointer;
-    font: inherit;
     text-align: left;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 </style>

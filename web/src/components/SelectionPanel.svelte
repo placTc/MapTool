@@ -93,7 +93,7 @@
 <section class="panel">
   <header>
     <h2>{ids.length} {ids.length === 1 ? 'province' : 'provinces'} selected</h2>
-    <button class="link" onclick={onclear}>Clear</button>
+    <button class="btn link" onclick={onclear}>Clear</button>
   </header>
 
   {#if single !== null && detail}
@@ -140,8 +140,8 @@
   <div class="row">
     <span class="label">Type</span>
     <div class="seg">
-      <button class:on={kinds.size === 1 && kinds.has(0)} onclick={() => mutate(() => doc.setKind(typed(), 0))}>Land</button>
-      <button class:on={kinds.size === 1 && kinds.has(1)} onclick={() => mutate(() => doc.setKind(typed(), 1))}>Sea</button>
+      <button class="btn btn-secondary" class:on={kinds.size === 1 && kinds.has(0)} onclick={() => mutate(() => doc.setKind(typed(), 0))}>Land</button>
+      <button class="btn btn-secondary" class:on={kinds.size === 1 && kinds.has(1)} onclick={() => mutate(() => doc.setKind(typed(), 1))}>Sea</button>
     </div>
     {#if kinds.size > 1}<small>mixed</small>{/if}
   </div>
@@ -168,7 +168,7 @@
   <div class="states">
     <div class="line">
       <input type="text" placeholder="New state name" bind:value={newName} onkeydown={(e) => e.key === 'Enter' && createState()} />
-      <button onclick={createState}>Create state</button>
+      <button class="btn btn-secondary" onclick={createState}>Create state</button>
     </div>
     {#if states.length}
       <div class="line">
@@ -176,11 +176,11 @@
           <option value="">Add to existing state…</option>
           {#each states as s (s.id)}<option value={String(s.id)}>{s.name}</option>{/each}
         </select>
-        <button onclick={addToState} disabled={target === ''}>Add</button>
+        <button class="btn btn-secondary" onclick={addToState} disabled={target === ''}>Add</button>
       </div>
     {/if}
     {#if anyAssigned}
-      <button class="secondary" onclick={() => mutate(() => doc.unassign(typed()))}>Remove from state</button>
+      <button class="btn btn-secondary" onclick={() => mutate(() => doc.unassign(typed()))}>Remove from state</button>
     {/if}
   </div>
 </section>
@@ -260,26 +260,12 @@
     border-radius: 0 4px 4px 0;
   }
   button {
-    background: #363b45;
-    color: inherit;
-    border: 0;
-    border-radius: 4px;
     padding: 5px 11px;
-    cursor: pointer;
-    font: inherit;
   }
   button.on,
   .states .line button:not(:disabled) {
     background: #2f6fed;
     color: white;
-  }
-  button.secondary {
-    background: #363b45;
-    color: inherit;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
   button.link {
     background: none;

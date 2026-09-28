@@ -46,8 +46,8 @@
       Your browser puts it in its download folder, unless it is set to ask where.
     </p>
     <div class="actions">
-      <button type="button" class="secondary" onclick={oncancel}>Cancel</button>
-      <button type="submit" disabled={!filename}>Save</button>
+      <button type="button" class="btn btn-secondary" onclick={oncancel}>Cancel</button>
+      <button type="submit" class="btn btn-primary" disabled={!filename}>Save</button>
     </div>
   </form>
   </div>
@@ -100,11 +100,6 @@
   .ext {
     color: #9aa3ad;
   }
-  .hint {
-    margin: 0;
-    color: #9aa3ad;
-    font-size: 12px;
-  }
   code {
     color: #e6e8eb;
   }
@@ -114,20 +109,6 @@
     gap: 8px;
   }
   button {
-    background: #2f6fed;
-    color: white;
-    border: 0;
-    border-radius: 4px;
     padding: 6px 14px;
-    cursor: pointer;
-    font: inherit;
-  }
-  button.secondary {
-    background: #363b45;
-    color: inherit;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
   }
 </style>

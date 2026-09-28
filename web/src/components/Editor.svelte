@@ -545,7 +545,7 @@
 
 <div class="editor">
   <header>
-    <button class="secondary" onclick={onclose} title="Back to the start screen">← Maps</button>
+    <button class="btn btn-secondary" onclick={onclose} title="Back to the start screen">← Maps</button>
     <input
       class="title"
       type="text"
@@ -559,10 +559,10 @@
     />
 
     <div class="seg" role="group" aria-label="View">
-      <button class:on={viewKind === 'provinces'} onclick={() => setView('provinces')}>Provinces</button>
-      <button class:on={viewKind === 'states'} onclick={() => setView('states')}>States</button>
-      <button class:on={viewKind === 'countries'} onclick={() => setView('countries')}>Countries</button>
-      <button class:on={viewKind === 'regions'} onclick={() => setView('regions')}>Regions</button>
+      <button class="btn btn-secondary" class:on={viewKind === 'provinces'} onclick={() => setView('provinces')}>Provinces</button>
+      <button class="btn btn-secondary" class:on={viewKind === 'states'} onclick={() => setView('states')}>States</button>
+      <button class="btn btn-secondary" class:on={viewKind === 'countries'} onclick={() => setView('countries')}>Countries</button>
+      <button class="btn btn-secondary" class:on={viewKind === 'regions'} onclick={() => setView('regions')}>Regions</button>
     </div>
 
     {#if viewKind === 'provinces'}
@@ -579,8 +579,8 @@
       </label>
     {/if}
 
-    <button class="secondary" onclick={fit}>Fit</button>
-    <button class="secondary" onclick={() => zoomToProvinces(highlighted)} disabled={highlighted.size === 0}>Zoom to selection</button>
+    <button class="btn btn-secondary" onclick={fit}>Fit</button>
+    <button class="btn btn-secondary" onclick={() => zoomToProvinces(highlighted)} disabled={highlighted.size === 0}>Zoom to selection</button>
     <span class="with-info">
       <label class="button secondary">
         Import CSV
@@ -605,7 +605,7 @@
         </p>
       </InfoTip>
     </span>
-    <button class="secondary" onclick={() => (saving = true)} title="Save the map, with everything you have added, as a file">Save as…</button>
+    <button class="btn btn-secondary" onclick={() => (saving = true)} title="Save the map, with everything you have added, as a file">Save as…</button>
     <span class="status">{status}</span>
   </header>
 
@@ -667,7 +667,7 @@
               {/if}
             </ul>
           {/if}
-          <button onclick={() => (csvReport = null)}>OK</button>
+          <button class="btn btn-primary" onclick={() => (csvReport = null)}>OK</button>
         </div>
       {/if}
     </section>
@@ -699,7 +699,7 @@
           oncreated={clearSelection}
         />
       {:else if selectedCount === 0 && tool !== 'box'}
-        <p class="hint">
+        <p class="hint hint-bar">
           {#if viewKind === 'provinces'}
             Click a province to select it; ctrl-click (or shift-click) adds more.
           {:else}
@@ -789,15 +789,8 @@
     color: #9aa3ad;
   }
   button {
-    background: #2f6fed;
-    color: white;
-    border: 0;
-    border-radius: 4px;
     padding: 5px 11px;
-    cursor: pointer;
-    font: inherit;
   }
-  button.secondary,
   label.button.secondary {
     background: #363b45;
     color: inherit;
@@ -812,16 +805,10 @@
     align-items: center;
     gap: 6px;
   }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
   .seg {
     display: flex;
   }
   .seg button {
-    background: #363b45;
-    color: inherit;
     border-radius: 0;
   }
   .seg button:first-child {
@@ -954,9 +941,7 @@
     background: #1a1d22;
     border-left: 1px solid #2c3038;
   }
-  .hint {
-    color: #9aa3ad;
-    margin: 0;
+  .hint-bar {
     padding: 12px;
     border-bottom: 1px solid #2c3038;
   }

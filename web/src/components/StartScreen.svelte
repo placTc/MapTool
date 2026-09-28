@@ -77,7 +77,7 @@
       <ul>
         {#each recents as r (r.id)}
           <li>
-            <button class="thumb" onclick={() => onopenrecent(r.id)} disabled={busy} title="Open {r.name}">
+            <button class="btn thumb" onclick={() => onopenrecent(r.id)} disabled={busy} title="Open {r.name}">
               <img src={r.thumb} alt="" />
             </button>
             <div class="info">
@@ -85,9 +85,9 @@
               <span>{r.width}×{r.height} · {r.provinces.toLocaleString()} provinces · {r.states} {r.states === 1 ? 'state' : 'states'}</span>
               <span>{when(r.openedAt)} · {size(r.bytes)}</span>
               <div class="actions">
-                <button onclick={() => onopenrecent(r.id)} disabled={busy}>Open</button>
-                <button class="secondary" onclick={() => ondownload(r.id)} disabled={busy}>Download</button>
-                <button class="secondary danger" onclick={() => ondelete(r.id)} disabled={busy}>Remove</button>
+                <button class="btn btn-primary" onclick={() => onopenrecent(r.id)} disabled={busy}>Open</button>
+                <button class="btn btn-secondary" onclick={() => ondownload(r.id)} disabled={busy}>Download</button>
+                <button class="btn btn-secondary btn-danger" onclick={() => ondelete(r.id)} disabled={busy}>Remove</button>
               </div>
             </div>
           </li>
@@ -135,8 +135,7 @@
     gap: 14px;
     margin-bottom: 14px;
   }
-  .button,
-  button {
+  .button {
     background: #2f6fed;
     color: white;
     border: 0;
@@ -145,16 +144,13 @@
     cursor: pointer;
     font: inherit;
   }
-  .button.disabled,
-  button:disabled {
+  .button.disabled {
     opacity: 0.5;
     cursor: default;
   }
-  button.secondary {
-    background: #363b45;
-  }
-  button.danger:hover:not(:disabled) {
-    background: #8a2f2f;
+  button {
+    border-radius: 5px;
+    padding: 7px 14px;
   }
   fieldset {
     border: 1px solid #2c3038;

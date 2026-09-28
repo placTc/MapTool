@@ -320,61 +320,86 @@ impl Reader<'_> {
     }
 }
 
+/// Per-province vertex/index counts, and each province's local index base
+/// (where its vertices start in the flat, rebased index stream) — computed
+/// once and shared by `write_header_and_provinces` and `write_geometry`.
+struct EncodedCounts {
+    vertices: Vec<u32>,
+    indices: Vec<u32>,
+    base: Vec<u32>,
+}
+
+fn count_per_province(mesh: &MapMesh) -> EncodedCounts {
+    let n = mesh.provinces.len();
+    let mut vertices = vec![0u32; n];
+    for &p in &mesh.vertex_province {
+        vertices[p as usize] += 1;
+    }
+    let mut indices = vec![0u32; n];
+    for tri in mesh.indices.chunks_exact(3) {
+        indices[mesh.vertex_province[tri[0] as usize] as usize] += 3;
+    }
+    let mut base = vec![0u32; n];
+    let mut acc = 0;
+    for i in 0..n {
+        base[i] = acc;
+        acc += vertices[i];
+    }
+    EncodedCounts { vertices, indices, base }
+}
+
+fn write_header_and_provinces(out: &mut Vec<u8>, mesh: &MapMesh, counts: &EncodedCounts) {
+    let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
+    let ring_count = mesh.ring_starts.len() - 1;
+    put(mesh.width);
+    put(mesh.height);
+    put(mesh.provinces.len() as u32);
+    put(ring_count as u32);
+    for (i, p) in mesh.provinces.iter().enumerate() {
+        put(u32::from_le_bytes([p.color[0], p.color[1], p.color[2], 0]));
+        put(p.pixel_count);
+        for b in p.bbox {
+            put(b);
+        }
+        put(counts.vertices[i]);
+        put(counts.indices[i]);
+        put(mesh.province_rings[i][1]);
+    }
+}
+
+fn write_geometry(out: &mut Vec<u8>, mesh: &MapMesh, counts: &EncodedCounts) {
+    let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
+    for w in mesh.ring_starts.windows(2) {
+        put(w[1] - w[0]);
+    }
+    for &v in &mesh.positions {
+        put(v.to_bits());
+    }
+    let mut idx = mesh.indices.iter();
+    for i in 0..mesh.provinces.len() {
+        for _ in 0..counts.indices[i] {
+            put(idx.next().unwrap() - counts.base[i]);
+        }
+    }
+    for &v in &mesh.line_positions {
+        put(v.to_bits());
+    }
+}
+
 impl MapMesh {
     /// Serialize to the compressed section format described above.
     pub(crate) fn encode(&self) -> Vec<u8> {
-        let n = self.provinces.len();
-        let mut vertices = vec![0u32; n];
-        for &p in &self.vertex_province {
-            vertices[p as usize] += 1;
-        }
-        let mut indices = vec![0u32; n];
-        for tri in self.indices.chunks_exact(3) {
-            indices[self.vertex_province[tri[0] as usize] as usize] += 3;
-        }
-        // Local index base of each province: where its vertices start.
-        let mut base = vec![0u32; n];
-        let mut acc = 0;
-        for i in 0..n {
-            base[i] = acc;
-            acc += vertices[i];
-        }
-
+        let counts = count_per_province(self);
         let ring_count = self.ring_starts.len() - 1;
         let mut out: Vec<u8> = Vec::with_capacity(
-            16 + n * 36 + ring_count * 4 + self.positions.len() * 4 + self.indices.len() * 4 + self.line_positions.len() * 4,
+            16 + self.provinces.len() * 36
+                + ring_count * 4
+                + self.positions.len() * 4
+                + self.indices.len() * 4
+                + self.line_positions.len() * 4,
         );
-        let mut put = |v: u32| out.extend_from_slice(&v.to_le_bytes());
-        put(self.width);
-        put(self.height);
-        put(n as u32);
-        put(ring_count as u32);
-        for (i, p) in self.provinces.iter().enumerate() {
-            put(u32::from_le_bytes([p.color[0], p.color[1], p.color[2], 0]));
-            put(p.pixel_count);
-            for b in p.bbox {
-                put(b);
-            }
-            put(vertices[i]);
-            put(indices[i]);
-            put(self.province_rings[i][1]);
-        }
-        for w in self.ring_starts.windows(2) {
-            put(w[1] - w[0]);
-        }
-        for &v in &self.positions {
-            put(v.to_bits());
-        }
-        let mut idx = self.indices.iter();
-        for i in 0..n {
-            for _ in 0..indices[i] {
-                put(idx.next().unwrap() - base[i]);
-            }
-        }
-        for &v in &self.line_positions {
-            put(v.to_bits());
-        }
-
+        write_header_and_provinces(&mut out, self, &counts);
+        write_geometry(&mut out, self, &counts);
         miniz_oxide::deflate::compress_to_vec(&out, COMPRESSION_LEVEL)
     }
 

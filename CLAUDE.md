@@ -125,8 +125,10 @@ Pitfalls learned the hard way:
   `git -c user.name=... -c user.email=...` (there is no git identity configured, and do not set one).
 - Commit after each finished piece of work, without asking, with a descriptive message ending in the
   Claude co-author trailer. Keep the working tree clean between tasks.
-- This machine has no GitHub credentials: **the user pushes**. Say how many commits are unpushed
-  and leave it to them; do not go looking for tokens.
+- Pushing: plain `git push` works. `gh` is installed and logged in as placTc, and `gh auth setup-git`
+  has been run, so git takes GitHub credentials from `gh` (token in the keyring). SSH does not work from
+  Claude's shell: the key in `~/.ssh` has a passphrase and there is no ssh-agent. Only push when asked,
+  and say what was pushed.
 
 ## Known limits and open ideas
 

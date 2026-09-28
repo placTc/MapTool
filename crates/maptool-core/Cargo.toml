@@ -1,0 +1,14 @@
+[package]
+name = "maptool-core"
+version = "0.1.0"
+edition = "2024"
+description = "Turn solid-colored province bitmaps into smoothed, interactable SVG paths"
+license = "GPL-3.0-or-later"
+
+[features]
+default = []
+# File decoding (PNG/BMP) via the `image` crate. Off for the WASM build.
+io = ["dep:image"]
+
+[dependencies]
+image = { version = "0.25", default-features = false, features = ["png", "bmp"], optional = true }

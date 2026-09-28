@@ -1,0 +1,22 @@
+[project]
+name = "maptool"
+version = "0.1.0"
+description = "Turn solid-colored province bitmaps into smoothed, interactable SVG paths"
+readme = "README.md"
+requires-python = ">=3.14"
+dependencies = []
+
+[project.scripts]
+maptool-py = "maptool:main"
+
+[dependency-groups]
+dev = ["pytest"]
+
+[build-system]
+requires = ["maturin>=1.9,<2"]
+build-backend = "maturin"
+
+[tool.maturin]
+manifest-path = "crates/maptool-py/Cargo.toml"
+python-source = "src"
+module-name = "maptool._core"

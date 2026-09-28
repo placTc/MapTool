@@ -1,0 +1,9 @@
+target/
+node_modules/
+dist/
+pkg/
+*.svg.tmp
+__pycache__/
+*.so
+.venv/
+*.egg-info/

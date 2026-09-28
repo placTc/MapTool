@@ -124,11 +124,11 @@ Pitfalls learned the hard way:
 - Author every commit as `Egor Matuk <gregory.matuk2004@gmail.com>` by passing
   `git -c user.name=... -c user.email=...` (there is no git identity configured, and do not set one).
 - Commit after each finished piece of work, without asking, with a descriptive message ending in the
-  Claude co-author trailer. Keep the working tree clean between tasks.
+  Claude co-author trailer, and push it right away. Keep the working tree clean between tasks.
 - Pushing: plain `git push` works. `gh` is installed and logged in as placTc, and `gh auth setup-git`
   has been run, so git takes GitHub credentials from `gh` (token in the keyring). SSH does not work from
-  Claude's shell: the key in `~/.ssh` has a passphrase and there is no ssh-agent. Only push when asked,
-  and say what was pushed.
+  Claude's shell: the key in `~/.ssh` has a passphrase and there is no ssh-agent. **Push after every commit,
+  automatically** (the user said to): commit, `git push`, and say what went out.
 
 ## Known limits and open ideas
 

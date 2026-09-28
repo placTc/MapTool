@@ -3,11 +3,13 @@
   import { MapRenderer, type Camera } from '../lib/gl';
   import { fileSafe } from '../lib/files';
   import { biomeList, filters, LEVEL, type MapDocument, type ViewKind } from '../lib/map';
+  import { TOOLS, type ToolId } from '../lib/tools';
   import BoxToolPanel from './BoxToolPanel.svelte';
   import GroupsPanel from './GroupsPanel.svelte';
   import SaveDialog from './SaveDialog.svelte';
   import SelectionPanel from './SelectionPanel.svelte';
   import StatesPanel from './StatesPanel.svelte';
+  import ToolRail from './ToolRail.svelte';
 
   interface Props {
     doc: MapDocument;
@@ -55,7 +57,11 @@
   let lastFileName = '';
 
   // ---- The box tool
-  let tool = $state<'pan' | 'box'>('pan');
+  let tool = $state<ToolId>('pan');
+  /** True while the map is being dragged, for the cursor. */
+  let panning = $state(false);
+  /** Whether Space is held, which pans with any tool. */
+  let spaceHeld = $state(false);
   let boxMode = $state<'replace' | 'add' | 'remove'>('replace');
   let boxWhole = $state(false);
   let boxTypes = $state<'all' | 'land' | 'sea'>('all');
@@ -330,7 +336,6 @@
 
   type Drag = { kind: 'pan'; x: number; y: number; cam: Camera; moved: boolean } | { kind: 'box'; x: number; y: number; moved: boolean };
   let drag: Drag | null = null;
-  let spaceDown = false;
 
   function onPointerDown(e: PointerEvent) {
     if (e.button === 2) return;
@@ -339,7 +344,7 @@
     } catch {
       // The pointer is already gone; dragging still works without capture.
     }
-    const pan = tool === 'pan' || e.button === 1 || spaceDown;
+    const pan = tool === 'pan' || e.button === 1 || spaceHeld;
     drag = pan ? { kind: 'pan', x: e.clientX, y: e.clientY, cam, moved: false } : { kind: 'box', x: e.clientX, y: e.clientY, moved: false };
   }
 
@@ -353,6 +358,7 @@
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
     if (drag.kind === 'pan') {
+      panning = true;
       cam = { x: drag.cam.x - dx / drag.cam.k, y: drag.cam.y - dy / drag.cam.k, k: drag.cam.k };
       requestDraw();
     } else {
@@ -367,6 +373,7 @@
   function onPointerUp(e: PointerEvent) {
     const d = drag;
     drag = null;
+    panning = false;
     if (!d) return;
     if (d.kind === 'box' && d.moved) {
       applyBox(boxProvinces(d.x, d.y, e.clientX, e.clientY), e);
@@ -438,16 +445,17 @@
       } else {
         clearSelection();
       }
-    } else if (e.key === 'b' || e.key === 'B') {
-      tool = tool === 'box' ? 'pan' : 'box';
     } else if (e.key === ' ') {
-      spaceDown = true;
+      spaceHeld = true;
       e.preventDefault();
+    } else {
+      const picked = TOOLS.find((t) => t.key === e.key.toLowerCase());
+      if (picked) tool = picked.id;
     }
   }
 
   function onKeyUp(e: KeyboardEvent) {
-    if (e.key === ' ') spaceDown = false;
+    if (e.key === ' ') spaceHeld = false;
   }
 
   async function importCsv(file: File) {
@@ -530,11 +538,6 @@
       </label>
     {/if}
 
-    <div class="seg" role="group" aria-label="Tool">
-      <button class:on={tool === 'pan'} onclick={() => (tool = 'pan')} title="Drag to pan">Pan</button>
-      <button class:on={tool === 'box'} onclick={() => (tool = 'box')} title="Drag a box to select (B)">Box select</button>
-    </div>
-
     <button class="secondary" onclick={fit}>Fit</button>
     <button class="secondary" onclick={() => zoomToProvinces(highlighted)} disabled={highlighted.size === 0}>Zoom to selection</button>
     <label class="button secondary" title="Load a CSV that gives each province's type (land or sea) and ID by its hex color">
@@ -546,10 +549,14 @@
   </header>
 
   <div class="body">
+    <ToolRail active={tool} onselect={(id) => (tool = id)} />
+
     <section class="stage" bind:clientWidth={cw} bind:clientHeight={ch}>
       <canvas
         bind:this={canvasEl}
-        class:boxing={tool === 'box'}
+        class:pan={tool === 'pan' || spaceHeld}
+        class:panning
+        class:boxing={tool === 'box' && !spaceHeld}
         use:wheelAction
         onpointerdown={onPointerDown}
         onpointermove={onPointerMove}
@@ -630,7 +637,7 @@
         />
       {:else if selectedCount === 0 && tool !== 'box'}
         <p class="hint">
-          Click a province to select it; ctrl-click (or shift-click) adds more. Drag to pan, wheel to zoom, Esc clears, B for box select.
+          Click a province to select it; ctrl-click (or shift-click) adds more. Wheel zooms, Esc clears. Pick a tool on the left: Pan (P) or Box select (B).
           Switch to States, Countries or Regions to work with whole groups.
         </p>
       {/if}
@@ -786,12 +793,18 @@
     width: 100%;
     height: 100%;
     display: block;
-    cursor: crosshair;
+    cursor: default;
     touch-action: none;
     user-select: none;
   }
+  canvas.pan {
+    cursor: grab;
+  }
+  canvas.pan.panning {
+    cursor: grabbing;
+  }
   canvas.boxing {
-    cursor: cell;
+    cursor: crosshair;
   }
   .marquee {
     position: absolute;

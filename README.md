@@ -56,7 +56,11 @@ The smoothing and validation settings live here and apply to newly built maps.
 **Editing.** Click a province to select it; ctrl/cmd/shift-click adds or removes provinces;
 the wheel zooms, Esc clears the selection.
 
-- *Box selection* (the **Box select** tool, or press `B`): drag a rectangle over the map. In
+- *Tools*: the tool sidebar on the left picks what dragging on the map does. **Pan** (`P`)
+  moves the map; **Box** (`B`) draws a selection box. Clicking selects with either, and holding
+  Space pans with any tool. Keys are ignored while you type in a field. A new tool is one entry
+  in `web/src/lib/tools.ts` plus its behavior in the editor.
+- *Box selection* (the **Box** tool, or press `B`): drag a rectangle over the map. In
   the sidebar, choose what dropping the box does (replace the selection, add to it, or
   deselect what it covers; Shift adds and Alt removes whatever the mode is), whether it takes
   provinces it touches or only those fully inside it, land and/or sea only, and whether to

@@ -2,6 +2,9 @@ use js_sys::{Float32Array, Uint32Array};
 use maptool_core::{Biome, Document, GroupKind, Kind, Level, Options, PixelFormat, ViewMode};
 use wasm_bindgen::prelude::*;
 
+mod color;
+mod stats;
+
 /// Tuning knobs. Create with `new Settings()` and assign the fields you care about.
 #[wasm_bindgen]
 #[derive(Clone, Copy)]
@@ -152,7 +155,7 @@ impl MapDocument {
     /// Source color of a province as 0xRRGGBB.
     pub fn color(&self, id: usize) -> Result<u32, JsError> {
         let [r, g, b] = self.info(id)?.color;
-        Ok(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+        Ok(color::pack_rgb(r, g, b))
     }
 
     #[wasm_bindgen(js_name = pixelCount)]
@@ -196,8 +199,7 @@ impl MapDocument {
     /// a population]`. Unknown ids are ignored.
     #[wasm_bindgen(js_name = provinceStats)]
     pub fn province_stats(&self, ids: &[u32]) -> Vec<f64> {
-        let s = self.0.province_stats(ids);
-        vec![s.provinces as f64, s.land as f64, s.sea as f64, s.pixels as f64, s.population as f64, s.populated as f64]
+        stats::flatten_stats(&self.0.province_stats(ids))
     }
 
     /// The distinct states that some provinces are in, ascending; -1 stands for "in no state".
@@ -425,7 +427,7 @@ impl MapDocument {
     #[wasm_bindgen(js_name = stateColor)]
     pub fn state_color(&self, id: u32) -> Result<u32, JsError> {
         let [r, g, b] = self.state(id)?.color;
-        Ok(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+        Ok(color::pack_rgb(r, g, b))
     }
 
     /// The province ids in a state, ascending.
@@ -444,7 +446,7 @@ impl MapDocument {
     #[wasm_bindgen(js_name = stateStats)]
     pub fn state_stats(&self, id: u32) -> Result<Vec<f64>, JsError> {
         let s = self.0.state_stats(id).ok_or_else(|| js_err(format!("no state {id}")))?;
-        Ok(vec![s.provinces as f64, s.land as f64, s.sea as f64, s.pixels as f64, s.population as f64, s.populated as f64])
+        Ok(stats::flatten_stats(&s))
     }
 
     /// Create a state from `provinces`, taking them out of any state they were in.
@@ -473,7 +475,7 @@ impl MapDocument {
     /// `rgb` is 0xRRGGBB.
     #[wasm_bindgen(js_name = setStateColor)]
     pub fn set_state_color(&mut self, id: u32, rgb: u32) -> Result<(), JsError> {
-        self.0.states.set_color(id, [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]).map_err(js_err)
+        self.0.states.set_color(id, color::unpack_rgb(rgb)).map_err(js_err)
     }
 
     /// Delete a state; its provinces become unassigned, and it leaves its country and
@@ -519,7 +521,7 @@ impl MapDocument {
     #[wasm_bindgen(js_name = groupColor)]
     pub fn group_color(&self, kind: u8, id: u32) -> Result<u32, JsError> {
         let [r, g, b] = self.group(kind, id)?.color;
-        Ok(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
+        Ok(color::pack_rgb(r, g, b))
     }
 
     /// A country's three-letter tag, or "" if none is set. Always "" for a strategic region.
@@ -559,7 +561,7 @@ impl MapDocument {
         let k = kind_of(kind)?;
         let s = self.0.group_stats(k, id).ok_or_else(|| js_err(format!("no {} {id}", k.noun())))?;
         let states = self.group(kind, id)?.states.len();
-        Ok(vec![states as f64, s.provinces as f64, s.land as f64, s.sea as f64, s.pixels as f64, s.population as f64, s.populated as f64])
+        Ok(std::iter::once(states as f64).chain(stats::flatten_stats(&s)).collect())
     }
 
     /// Create a group from `states`, taking them out of the group of this kind they were
@@ -596,7 +598,7 @@ impl MapDocument {
     /// `rgb` is 0xRRGGBB.
     #[wasm_bindgen(js_name = setGroupColor)]
     pub fn set_group_color(&mut self, kind: u8, id: u32, rgb: u32) -> Result<(), JsError> {
-        self.0.groups_mut(kind_of(kind)?).set_color(id, [(rgb >> 16) as u8, (rgb >> 8) as u8, rgb as u8]).map_err(js_err)
+        self.0.groups_mut(kind_of(kind)?).set_color(id, color::unpack_rgb(rgb)).map_err(js_err)
     }
 
     /// Delete a group; its states become ungrouped.

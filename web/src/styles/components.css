@@ -38,3 +38,100 @@
   color: var(--color-text-muted);
   font-size: 12px;
 }
+
+/* List-card layout shared by StatesPanel and GroupsPanel: a `<ul class="list-cards">` of
+   `<li class="list-card">` rows, each with a `.head` line (color swatch, id/tag badge, name
+   field, pick-count button), an optional `dl`/`dd` detail block, and `.actions` buttons.
+
+   CSS grid blowout (see CLAUDE.md's "CSS grid blowout" section): both `.list-cards` and
+   `.list-card` are `display: grid` so rows/cards stack with `gap`, nested inside the sidebar's
+   fixed-width, scrolling `aside`. A grid item's automatic minimum size defaults to its content's
+   min-content size, not 0, so a fixed-width badge or input that can't shrink enough forces its
+   track — and everything nested inside it, up to the sidebar's scrollable width — wider than the
+   sidebar, with no visible scrollbar to explain why. `min-width: 0` on `.list-card` fixes the
+   card itself; `.list-card` is itself a grid container, so its own direct children need the same
+   fix one level down (`.list-card > *`). Check any new fixed-width row element added to a card by
+   measuring `aside.scrollWidth` vs `aside.clientWidth` in a real browser, not just `svelte-check`
+   (this is a rendering effect, not a type error). */
+.list-cards {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: grid;
+  gap: 6px;
+}
+.list-card {
+  border: 1px solid var(--color-border);
+  border-radius: 6px;
+  padding: 6px;
+  display: grid;
+  gap: 6px;
+  min-width: 0;
+}
+.list-card > * {
+  min-width: 0;
+}
+.list-card.selected {
+  border-color: var(--color-selected);
+  background: rgba(255, 212, 0, 0.06);
+}
+.list-card .head {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+.list-card .color {
+  width: 28px;
+  height: 26px;
+  padding: 0;
+  border: 0;
+  background: none;
+  flex: none;
+}
+.list-card .name {
+  flex: 1;
+  min-width: 0;
+  background: transparent;
+  color: inherit;
+  border: 1px solid transparent;
+  border-radius: 4px;
+  padding: 3px 5px;
+  font: inherit;
+}
+.list-card .name:hover,
+.list-card .name:focus {
+  border-color: var(--color-surface);
+  background: var(--color-bg);
+}
+.list-card .uid {
+  flex: none;
+  width: 40px;
+  text-align: center;
+  color: var(--color-text-muted);
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+}
+.list-card .pick {
+  min-width: 36px;
+}
+.list-card.selected .pick {
+  background: var(--color-accent);
+  color: white;
+}
+.list-card dl {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 2px 10px;
+  margin: 0;
+  font-size: 13px;
+}
+.list-card dt {
+  color: var(--color-text-muted);
+}
+.list-card dd {
+  margin: 0;
+}
+.list-card .actions {
+  display: flex;
+  gap: 6px;
+}

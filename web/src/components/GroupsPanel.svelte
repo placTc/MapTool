@@ -88,7 +88,7 @@
       <p class="lead">{stateIds.length} {stateIds.length === 1 ? 'state' : 'states'} selected</p>
       <div class="line">
         <input type="text" placeholder="New {noun} name" bind:value={newName} onkeydown={(e) => e.key === 'Enter' && create()} />
-        <button onclick={create}>Create</button>
+        <button class="btn btn-primary" onclick={create}>Create</button>
       </div>
       {#if list.length}
         <div class="line">
@@ -96,11 +96,11 @@
             <option value="">Add to existing {noun}…</option>
             {#each list as g (g.id)}<option value={String(g.id)}>{g.name}</option>{/each}
           </select>
-          <button onclick={add} disabled={target === ''}>Add</button>
+          <button class="btn btn-primary" onclick={add} disabled={target === ''}>Add</button>
         </div>
       {/if}
       {#if grouped > 0}
-        <button class="secondary" onclick={() => mutate(() => doc.unassignFromGroups(kind, typed()))}>Remove from {noun}</button>
+        <button class="btn btn-secondary" onclick={() => mutate(() => doc.unassignFromGroups(kind, typed()))}>Remove from {noun}</button>
       {/if}
     </div>
   {:else if list.length === 0}
@@ -109,9 +109,9 @@
     </p>
   {/if}
 
-  <ul>
+  <ul class="list-cards">
     {#each list as g (g.id)}
-      <li class:on={selected.has(g.id)}>
+      <li class="list-card" class:selected={selected.has(g.id)}>
         <div class="head">
           <input
             class="color"
@@ -140,7 +140,7 @@
             onchange={(e) => mutate(() => doc.renameGroup(kind, g.id, e.currentTarget.value))}
             onfocus={(e) => e.currentTarget.select()}
           />
-          <button class="pick" onclick={(e) => onselect(g.id, e.ctrlKey || e.metaKey || e.shiftKey)} title="Select this {noun} (ctrl-click adds)">
+          <button class="btn btn-secondary pick" onclick={(e) => onselect(g.id, e.ctrlKey || e.metaKey || e.shiftKey)} title="Select this {noun} (ctrl-click adds)">
             {g.states}
           </button>
         </div>
@@ -158,8 +158,8 @@
             <dt>Population</dt><dd>{g.populated ? `${g.population.toLocaleString()} (set on ${g.populated})` : 'not set'}</dd>
           </dl>
           <div class="actions">
-            <button onclick={() => onzoom(doc.provincesOfGroup(kind, g.id))} disabled={g.provinces === 0}>Zoom to</button>
-            <button class="danger" onclick={() => remove(g.id, g.name)}>Delete</button>
+            <button class="btn btn-secondary" onclick={() => onzoom(doc.provincesOfGroup(kind, g.id))} disabled={g.provinces === 0}>Zoom to</button>
+            <button class="btn btn-secondary btn-danger" onclick={() => remove(g.id, g.name)}>Delete</button>
           </div>
         {/if}
       </li>
@@ -188,8 +188,7 @@
     display: inline;
   }
   .count,
-  .empty,
-  dt {
+  .empty {
     color: #9aa3ad;
   }
   .empty {
@@ -230,48 +229,10 @@
   textarea {
     resize: vertical;
   }
-  ul {
-    list-style: none;
-    margin: 8px 0 0;
-    padding: 0;
-    display: grid;
-    gap: 6px;
-  }
-  li {
-    border: 1px solid #2c3038;
-    border-radius: 6px;
-    padding: 6px;
-    display: grid;
-    gap: 6px;
-    /* Without this, a grid item's automatic minimum width is its content's min-content size,
-       which can force this card (and the sidebar's scrollable width) wider than the sidebar
-       itself once a row can't shrink enough — the classic CSS grid "blowout". `li` is itself a
-       grid container, so its own direct children need the same fix one level down. */
-    min-width: 0;
-  }
-  li > * {
-    min-width: 0;
-  }
-  li.on {
-    border-color: #ffd400;
-    background: rgba(255, 212, 0, 0.06);
-  }
-  .head {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .color {
-    width: 28px;
-    height: 26px;
-    padding: 0;
-    border: 0;
-    background: none;
-    flex: none;
-  }
+  /* The name field is also `input[type='text']`, so this panel's own text-input styling (above)
+     is more specific than the shared `.list-card .name` look and would otherwise win: restate
+     transparent here, `!important`, to keep it looking like a plain label rather than a field. */
   .name {
-    flex: 1;
-    min-width: 0;
     background: transparent !important;
     border-color: transparent !important;
   }
@@ -287,57 +248,16 @@
     text-transform: uppercase;
     letter-spacing: 0.05em;
   }
-  .uid {
-    flex: none;
+  /* Regions show a #id badge here instead of a country's tag; a touch wider than the shared
+     default so it lines up with .tag next to it. */
+  .list-card .uid {
     width: 44px;
-    text-align: center;
-    color: #9aa3ad;
-    font-size: 12px;
-    font-family: ui-monospace, monospace;
   }
   button {
-    background: #2f6fed;
-    color: white;
-    border: 0;
-    border-radius: 4px;
     padding: 4px 10px;
-    cursor: pointer;
-    font: inherit;
   }
-  button.secondary,
-  .pick,
-  .actions button {
-    background: #363b45;
-    color: inherit;
-  }
-  li.on .pick {
-    background: #2f6fed;
-    color: white;
-  }
-  .pick {
-    min-width: 36px;
-  }
-  button.danger:hover {
-    background: #8a2f2f;
-  }
-  button:disabled {
-    opacity: 0.5;
-    cursor: default;
-  }
-  dl {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 2px 10px;
-    margin: 0;
-    font-size: 13px;
-  }
-  dd {
-    margin: 0;
+  .list-card dd {
     min-width: 0;
     overflow-wrap: anywhere;
-  }
-  .actions {
-    display: flex;
-    gap: 6px;
   }
 </style>

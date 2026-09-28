@@ -51,9 +51,9 @@
   {#if list.length === 0}
     <p class="empty">No states yet. Select provinces (ctrl-click adds more), then create one.</p>
   {:else}
-    <ul>
+    <ul class="list-cards">
       {#each list as s (s.id)}
-        <li class:on={selected.has(s.id)}>
+        <li class="list-card" class:selected={selected.has(s.id)}>
           <div class="head">
             <input
               class="color"
@@ -70,7 +70,7 @@
               onchange={(e) => mutate(() => doc.renameState(s.id, e.currentTarget.value))}
               onfocus={(e) => e.currentTarget.select()}
             />
-            <button class="pick" onclick={(e) => onselect(s.id, e.ctrlKey || e.metaKey || e.shiftKey)} title="Select this state (ctrl-click adds)">
+            <button class="btn btn-secondary pick" onclick={(e) => onselect(s.id, e.ctrlKey || e.metaKey || e.shiftKey)} title="Select this state (ctrl-click adds)">
               {s.provinces}
             </button>
           </div>
@@ -89,8 +89,8 @@
               <dt>Population</dt><dd>{s.populated ? `${s.population.toLocaleString()} (set on ${s.populated})` : 'not set'}</dd>
             </dl>
             <div class="actions">
-              <button onclick={() => onzoom(doc.stateProvinces(s.id))}>Zoom to</button>
-              <button class="danger" onclick={() => remove(s.id, s.name, s.provinces)}>Delete</button>
+              <button class="btn btn-secondary" onclick={() => onzoom(doc.stateProvinces(s.id))}>Zoom to</button>
+              <button class="btn btn-secondary btn-danger" onclick={() => remove(s.id, s.name, s.provinces)}>Delete</button>
             </div>
           {/if}
         </li>
@@ -115,61 +115,11 @@
     margin: 0;
   }
   .count,
-  .empty,
-  dt {
+  .empty {
     color: #9aa3ad;
   }
   .empty {
     margin: 0;
-  }
-  ul {
-    list-style: none;
-    margin: 0;
-    padding: 0;
-    display: grid;
-    gap: 6px;
-  }
-  li {
-    border: 1px solid #2c3038;
-    border-radius: 6px;
-    padding: 6px;
-    display: grid;
-    gap: 6px;
-    /* Without this, a grid item's automatic minimum width is its content's min-content size,
-       which can force this card (and the sidebar's scrollable width) wider than the sidebar
-       itself once a row can't shrink enough — the classic CSS grid "blowout". `li` is itself a
-       grid container, so its own direct children need the same fix one level down. */
-    min-width: 0;
-  }
-  li > * {
-    min-width: 0;
-  }
-  li.on {
-    border-color: #ffd400;
-    background: rgba(255, 212, 0, 0.06);
-  }
-  .head {
-    display: flex;
-    gap: 6px;
-    align-items: center;
-  }
-  .color {
-    width: 28px;
-    height: 26px;
-    padding: 0;
-    border: 0;
-    background: none;
-    flex: none;
-  }
-  .name {
-    flex: 1;
-    min-width: 0;
-    background: transparent;
-    color: inherit;
-    border: 1px solid transparent;
-    border-radius: 4px;
-    padding: 3px 5px;
-    font: inherit;
   }
   textarea {
     background: #14161a;
@@ -180,50 +130,7 @@
     font: inherit;
     resize: vertical;
   }
-  .name:hover,
-  .name:focus {
-    border-color: #363b45;
-    background: #14161a;
-  }
-  .uid {
-    flex: none;
-    width: 40px;
-    text-align: center;
-    color: #9aa3ad;
-    font-size: 12px;
-    font-family: ui-monospace, monospace;
-  }
   button {
-    background: #363b45;
-    color: inherit;
-    border: 0;
-    border-radius: 4px;
     padding: 4px 10px;
-    cursor: pointer;
-    font: inherit;
-  }
-  .pick {
-    min-width: 36px;
-  }
-  li.on .pick {
-    background: #2f6fed;
-    color: white;
-  }
-  button.danger:hover {
-    background: #8a2f2f;
-  }
-  dl {
-    display: grid;
-    grid-template-columns: auto 1fr;
-    gap: 2px 10px;
-    margin: 0;
-    font-size: 13px;
-  }
-  dd {
-    margin: 0;
-  }
-  .actions {
-    display: flex;
-    gap: 6px;
   }
 </style>

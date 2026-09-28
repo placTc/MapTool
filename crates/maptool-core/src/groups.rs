@@ -81,7 +81,10 @@ fn auto_tag(name: &str, taken: impl Fn(&str) -> bool) -> String {
 pub struct GroupSet {
     kind: GroupKind,
     groups: Vec<Group>,
-    /// Ids are never reused within a set, even after a group is deleted.
+    /// For a country, a monotonic counter: ids are never reused, even after one is deleted (its
+    /// tag is what the user sees, not the id). For a region, a new one instead gets the smallest
+    /// id not currently in use, so its numbering stays compact. Either way `next_id` only grows,
+    /// so it also works as an upper bound for checking saved data.
     next_id: u32,
     /// The group of each state that is in one. Derived from `groups`.
     of_state: HashMap<u32, u32>,
@@ -152,11 +155,23 @@ impl GroupSet {
     }
 
     /// Create a group holding `states` (moved out of any group they were in). `exists` says
-    /// which state ids are real. A blank name becomes "<Country|Strategic region> <id>".
+    /// which state ids are real. A blank name becomes "<Country|Strategic region> <id>". A
+    /// region's id is the smallest one not already in use (see `next_id`); a country's always
+    /// moves forward.
     pub fn create(&mut self, name: &str, states: &[u32], exists: impl Fn(u32) -> bool) -> Result<u32, Error> {
         self.check(states, &exists)?;
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = match self.kind {
+            GroupKind::Country => {
+                let id = self.next_id;
+                self.next_id += 1;
+                id
+            }
+            GroupKind::Region => {
+                let id = (1..).find(|i| !self.groups.iter().any(|g| g.id == *i)).unwrap();
+                self.next_id = self.next_id.max(id + 1);
+                id
+            }
+        };
         let name: String = name.trim().chars().take(MAX_NAME_CHARS).collect();
         let name = if name.is_empty() {
             let noun = self.kind.noun();

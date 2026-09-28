@@ -66,6 +66,21 @@ fn states_can_have_descriptions() {
     assert_eq!(StateSet::from_bytes(&s.to_bytes(), 4).unwrap(), s);
 }
 
+#[test]
+fn a_deleted_states_id_is_reused_by_the_next_one_created() {
+    let mut s = StateSet::new(6);
+    let a = s.create("A", &[0]).unwrap();
+    let b = s.create("B", &[1]).unwrap();
+    let c = s.create("C", &[2]).unwrap();
+    assert_eq!([a, b, c], [1, 2, 3]);
+
+    s.delete(b).unwrap();
+    let d = s.create("D", &[3]).unwrap();
+    assert_eq!(d, b, "the freed id is reused, not a new one past c");
+    let e = s.create("E", &[4]).unwrap();
+    assert_eq!(e, 4, "with no gap left, a new state grows the numbering");
+}
+
 // ----------------------------------------------- countries and regions (groups)
 
 #[test]
@@ -127,6 +142,23 @@ fn groups_can_be_renamed_recolored_described_and_deleted() {
     let again = d.create_group(COUNTRY, "Again", &[s]).unwrap();
     assert!(again > c, "ids are never reused");
     assert_eq!(d.regions.group_of(s), Some(r), "deleting a country does not touch regions");
+}
+
+#[test]
+fn a_deleted_regions_id_is_reused_but_a_countrys_never_is() {
+    let mut d = grid(2, 1, 4);
+    let r1 = d.create_group(REGION, "R1", &[]).unwrap();
+    let r2 = d.create_group(REGION, "R2", &[]).unwrap();
+    d.groups_mut(REGION).delete(r1).unwrap();
+    let r3 = d.create_group(REGION, "R3", &[]).unwrap();
+    assert_eq!(r3, r1, "the freed region id is reused, not a new one past r2");
+    let r4 = d.create_group(REGION, "R4", &[]).unwrap();
+    assert_eq!(r4, r2 + 1, "with no gap left, a new region grows the numbering");
+
+    let c1 = d.create_group(COUNTRY, "C1", &[]).unwrap();
+    d.groups_mut(COUNTRY).delete(c1).unwrap();
+    let c2 = d.create_group(COUNTRY, "C2", &[]).unwrap();
+    assert!(c2 > c1, "a country's id is never reused: its tag is what the user sees");
 }
 
 // ------------------------------------------------------------ country tags

@@ -78,15 +78,16 @@ fn creating_and_moving_provinces_between_states() {
 }
 
 #[test]
-fn deleting_states_frees_provinces_and_never_reuses_ids() {
+fn deleting_a_state_frees_its_provinces_and_its_id() {
     let mut s = StateSet::new(4);
     let a = s.create("A", &[0, 1]).unwrap();
     s.delete(a).unwrap();
     assert_eq!(s.state_of(0), None);
     assert!(s.get(a).is_none());
+    assert!(matches!(s.delete(a), Err(Error::Edit(_))), "already deleted");
+
     let b = s.create("B", &[0]).unwrap();
-    assert!(b > a);
-    assert!(matches!(s.delete(a), Err(Error::Edit(_))));
+    assert_eq!(b, a, "the freed id is reused so state numbering stays sequential");
 }
 
 #[test]

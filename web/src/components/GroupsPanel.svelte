@@ -243,6 +243,14 @@
     padding: 6px;
     display: grid;
     gap: 6px;
+    /* Without this, a grid item's automatic minimum width is its content's min-content size,
+       which can force this card (and the sidebar's scrollable width) wider than the sidebar
+       itself once a row can't shrink enough — the classic CSS grid "blowout". `li` is itself a
+       grid container, so its own direct children need the same fix one level down. */
+    min-width: 0;
+  }
+  li > * {
+    min-width: 0;
   }
   li.on {
     border-color: #ffd400;

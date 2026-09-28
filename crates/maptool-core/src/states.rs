@@ -23,7 +23,9 @@ pub struct State {
 #[derive(Clone, Debug, PartialEq)]
 pub struct StateSet {
     states: Vec<State>,
-    /// Ids are never reused within a set, even after a state is deleted.
+    /// A new state gets the smallest id not currently in use, so deleting one and creating
+    /// another does not grow the numbering forever. Kept as a monotonic upper bound (it only
+    /// grows) so saved data can be checked without scanning it first.
     next_id: u32,
     /// State id of every province, or `NO_STATE`. Derived from `states`.
     of_province: Vec<u32>,
@@ -104,12 +106,13 @@ impl StateSet {
         }
     }
 
-    /// Create a state holding `provinces` (moved out of any state they were in).
-    /// An empty name becomes "State <id>". Returns the new state's id.
+    /// Create a state holding `provinces` (moved out of any state they were in). Its id is the
+    /// smallest one not already in use, so deleting a state and creating another reuses the
+    /// gap instead of growing past it. An empty name becomes "State <id>". Returns the new id.
     pub fn create(&mut self, name: &str, provinces: &[u32]) -> Result<u32, Error> {
         self.check(provinces)?;
-        let id = self.next_id;
-        self.next_id += 1;
+        let id = (1..).find(|i| !self.states.iter().any(|s| s.id == *i)).unwrap();
+        self.next_id = self.next_id.max(id + 1);
         self.states.push(State { id, name: clean_name(name, id), description: String::new(), color: auto_color(id), provinces: Vec::new() });
         self.assign(id, provinces)?;
         Ok(id)

@@ -86,6 +86,56 @@
     }
   }
 
+  type SavedCopy = { file: Uint8Array; edits?: Uint8Array; meta: store.RecentMeta };
+
+  /** The saved copy of this file, if this browser has one and storage works. */
+  async function loadSavedCopy(id: string): Promise<SavedCopy | undefined> {
+    return storageOk ? await store.loadRecent(id).catch(() => undefined) : undefined;
+  }
+
+  /**
+   * Reopen `saved`'s file with its edits applied. A copy that cannot be read (saved by another
+   * version of the app) is dropped — its document freed and its stale saved copy removed — so
+   * the caller falls back to building the map fresh.
+   */
+  async function reopenSavedCopy(saved: SavedCopy, id: string): Promise<MapDocument | undefined> {
+    status = 'Opening your saved copy…';
+    await yieldToPaint();
+    let reopened: MapDocument | undefined;
+    try {
+      reopened = await openMapBytes(saved.file, { tolerance, validate });
+      if (saved.edits) reopened.setEditsBytes(saved.edits);
+      return reopened;
+    } catch {
+      reopened?.free();
+      await store.remove(id).catch(() => {});
+      return undefined;
+    }
+  }
+
+  async function useReopenedMap(opened: MapDocument, saved: SavedCopy, id: string) {
+    if (!opened.mapName) opened.setMapName(saved.meta.name);
+    pending = null;
+    stored = true;
+    await show(opened, opened.mapName, id);
+    store.touch(id).catch(() => {});
+    editorStatus = `Opened your saved copy (${Math.round(loadTimings.wasmMs)} ms)`;
+  }
+
+  async function useFreshMap(bytes: Uint8Array, isMap: boolean, name: string, id: string, hadStaleSaved: boolean) {
+    status = isMap ? 'Opening…' : 'Building the map…';
+    await yieldToPaint();
+    const opened = await openMapBytes(bytes, { tolerance, validate });
+    // A new image is named after its file; a saved map keeps the name it was given.
+    if (!opened.mapName) opened.setMapName(name);
+    pending = { id, name: opened.mapName, file: isMap ? bytes : null };
+    stored = false;
+    await show(opened, opened.mapName, id);
+    editorStatus =
+      `${opened.width}×${opened.height}, ${opened.len.toLocaleString()} provinces (${Math.round(loadTimings.wasmMs)} ms)` +
+      (hadStaleSaved ? ' · its saved copy was from another version of the app, so it was built again' : '');
+  }
+
   async function openFile(file: File) {
     if (busy) return;
     busy = true;
@@ -96,42 +146,13 @@
       const id = await store.fileId(bytes, isMap ? 'map' : `t${tolerance}`);
       const name = nameOf(file.name);
 
-      // The same file again: open the saved copy, which has the edits made to it. A copy that cannot
-      // be read (saved by another version of the app) is dropped, and the map is built again.
-      const saved = storageOk ? await store.loadRecent(id).catch(() => undefined) : undefined;
-      let reopened: MapDocument | undefined;
-      if (saved) {
-        status = 'Opening your saved copy…';
-        await yieldToPaint();
-        try {
-          reopened = await openMapBytes(saved.file, { tolerance, validate });
-          if (saved.edits) reopened.setEditsBytes(saved.edits);
-        } catch {
-          reopened?.free();
-          reopened = undefined;
-          await store.remove(id).catch(() => {});
-        }
-      }
+      // The same file again: open the saved copy, which has the edits made to it.
+      const saved = await loadSavedCopy(id);
+      const reopened = saved && (await reopenSavedCopy(saved, id));
       if (saved && reopened) {
-        const opened = reopened;
-        if (!opened.mapName) opened.setMapName(saved.meta.name);
-        pending = null;
-        stored = true;
-        await show(opened, opened.mapName, id);
-        store.touch(id).catch(() => {});
-        editorStatus = `Opened your saved copy (${Math.round(loadTimings.wasmMs)} ms)`;
+        await useReopenedMap(reopened, saved, id);
       } else {
-        status = isMap ? 'Opening…' : 'Building the map…';
-        await yieldToPaint();
-        const opened = await openMapBytes(bytes, { tolerance, validate });
-        // A new image is named after its file; a saved map keeps the name it was given.
-        if (!opened.mapName) opened.setMapName(name);
-        pending = { id, name: opened.mapName, file: isMap ? bytes : null };
-        stored = false;
-        await show(opened, opened.mapName, id);
-        editorStatus =
-          `${opened.width}×${opened.height}, ${opened.len.toLocaleString()} provinces (${Math.round(loadTimings.wasmMs)} ms)` +
-          (saved ? ' · its saved copy was from another version of the app, so it was built again' : '');
+        await useFreshMap(bytes, isMap, name, id, !!saved);
       }
       status = '';
     } catch (e) {

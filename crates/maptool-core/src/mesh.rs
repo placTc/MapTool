@@ -386,6 +386,165 @@ fn write_geometry(out: &mut Vec<u8>, mesh: &MapMesh, counts: &EncodedCounts) {
     }
 }
 
+struct MeshHeader {
+    width: u32,
+    height: u32,
+    province_count: usize,
+    ring_count: usize,
+}
+
+fn read_header(r: &mut Reader, payload_len: usize) -> Result<MeshHeader, Error> {
+    let (width, height) = (r.u32()?, r.u32()?);
+    let province_count = r.u32()? as usize;
+    let ring_count = r.u32()? as usize;
+    if width == 0 || height == 0 {
+        return Err(bad("zero-sized image"));
+    }
+    // Each province takes 36 bytes, so a count the payload cannot hold is corrupt.
+    if province_count > payload_len / 36 || ring_count > payload_len / 4 {
+        return Err(bad("counts exceed the data"));
+    }
+    Ok(MeshHeader { width, height, province_count, ring_count })
+}
+
+/// Per-province counts read from the payload, before geometry is read.
+struct RawProvinceCounts {
+    provinces: Vec<ProvinceInfo>,
+    vertices: Vec<usize>,
+    indices: Vec<usize>,
+    rings: Vec<usize>,
+    total_vertices: usize,
+    total_indices: usize,
+}
+
+fn read_provinces(r: &mut Reader, header: &MeshHeader) -> Result<RawProvinceCounts, Error> {
+    let n = header.province_count;
+    let mut provinces = Vec::with_capacity(n);
+    let (mut vertices, mut indices, mut rings) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
+    for id in 0..n {
+        let c = r.u32()?.to_le_bytes();
+        provinces.push(ProvinceInfo {
+            id: id as u32,
+            color: [c[0], c[1], c[2]],
+            pixel_count: r.u32()?,
+            bbox: [r.u32()?, r.u32()?, r.u32()?, r.u32()?],
+        });
+        vertices.push(r.u32()? as usize);
+        let i = r.u32()? as usize;
+        if i % 3 != 0 {
+            return Err(bad("index count is not a multiple of 3"));
+        }
+        indices.push(i);
+        rings.push(r.u32()? as usize);
+    }
+    let sum = |v: &[usize]| v.iter().try_fold(0usize, |a, &b| a.checked_add(b)).ok_or_else(|| bad("counts overflow"));
+    let (total_vertices, total_indices, total_rings) = (sum(&vertices)?, sum(&indices)?, sum(&rings)?);
+    if total_rings != header.ring_count {
+        return Err(bad("ring counts disagree"));
+    }
+    Ok(RawProvinceCounts { provinces, vertices, indices, rings, total_vertices, total_indices })
+}
+
+/// Ring lengths for the whole payload, and the total number of border points they sum to.
+fn read_ring_lengths(r: &mut Reader, ring_count: usize) -> Result<(Vec<u32>, usize), Error> {
+    let ring_lens = r.u32s(ring_count)?;
+    let total_points: usize =
+        ring_lens.iter().try_fold(0usize, |a, &b| a.checked_add(b as usize)).ok_or_else(|| bad("counts overflow"))?;
+    if ring_lens.iter().any(|&l| l < 3) {
+        return Err(bad("a ring has fewer than 3 points"));
+    }
+    Ok((ring_lens, total_points))
+}
+
+struct GeometryArrays {
+    positions: Vec<f32>,
+    /// Triangle indices, local to their own province (see `rebuild_triangle_indices`).
+    local_indices: Vec<u32>,
+    line_positions: Vec<f32>,
+}
+
+/// Triangle positions, local (per-province) triangle indices, and border points.
+fn read_geometry_arrays(
+    r: &mut Reader,
+    counts: &RawProvinceCounts,
+    total_points: usize,
+    payload_len: usize,
+) -> Result<GeometryArrays, Error> {
+    let positions = r.f32s(counts.total_vertices.checked_mul(2).ok_or_else(|| bad("too large"))?)?;
+    let local_indices = r.u32s(counts.total_indices)?;
+    let line_positions = r.f32s(total_points.checked_mul(2).ok_or_else(|| bad("too large"))?)?;
+    if r.pos != payload_len {
+        return Err(bad("unexpected trailing data"));
+    }
+    if u32::try_from(counts.total_vertices).is_err() || u32::try_from(total_points).is_err() {
+        return Err(bad("too many vertices"));
+    }
+    Ok(GeometryArrays { positions, local_indices, line_positions })
+}
+
+struct TriangleIndices {
+    vertex_province: Vec<u32>,
+    indices: Vec<u32>,
+}
+
+/// Per-vertex province ids, and triangle indices rebased from per-province-local
+/// to global (`local` is not stored globally, to keep the format small).
+fn rebuild_triangle_indices(counts: &RawProvinceCounts, local: &[u32]) -> Result<TriangleIndices, Error> {
+    let n = counts.provinces.len();
+    let mut vertex_province = Vec::with_capacity(counts.total_vertices);
+    let mut indices = Vec::with_capacity(counts.total_indices);
+    let (mut base, mut next) = (0u32, 0usize);
+    for id in 0..n {
+        vertex_province.extend(std::iter::repeat_n(id as u32, counts.vertices[id]));
+        for &i in &local[next..next + counts.indices[id]] {
+            if i as usize >= counts.vertices[id] {
+                return Err(bad("a triangle refers to a missing vertex"));
+            }
+            indices.push(base + i);
+        }
+        next += counts.indices[id];
+        base += counts.vertices[id] as u32;
+    }
+    Ok(TriangleIndices { vertex_province, indices })
+}
+
+struct BorderIndex {
+    ring_starts: Vec<u32>,
+    line_indices: Vec<u32>,
+    line_ranges: Vec<[u32; 2]>,
+    province_rings: Vec<[u32; 2]>,
+}
+
+/// Border segment indices and per-province ring/line bookkeeping, rebuilt from
+/// each province's ring count and each ring's point count.
+fn rebuild_borders(counts: &RawProvinceCounts, ring_lens: &[u32]) -> BorderIndex {
+    let n = counts.provinces.len();
+    let total_points: usize = ring_lens.iter().map(|&l| l as usize).sum();
+    let mut ring_starts = Vec::with_capacity(ring_lens.len() + 1);
+    ring_starts.push(0u32);
+    let mut line_indices = Vec::with_capacity(total_points * 2);
+    let mut line_ranges = Vec::with_capacity(n);
+    let mut province_rings = Vec::with_capacity(n);
+    let mut ring = 0usize;
+    for id in 0..n {
+        let first_ring = ring as u32;
+        let line_start = line_indices.len() as u32;
+        for _ in 0..counts.rings[id] {
+            let start = *ring_starts.last().unwrap();
+            let len = ring_lens[ring];
+            for i in 0..len {
+                line_indices.push(start + i);
+                line_indices.push(start + (i + 1) % len);
+            }
+            ring_starts.push(start + len);
+            ring += 1;
+        }
+        province_rings.push([first_ring, counts.rings[id] as u32]);
+        line_ranges.push([line_start, line_indices.len() as u32 - line_start]);
+    }
+    BorderIndex { ring_starts, line_indices, line_ranges, province_rings }
+}
+
 impl MapMesh {
     /// Serialize to the compressed section format described above.
     pub(crate) fn encode(&self) -> Vec<u8> {
@@ -409,107 +568,25 @@ impl MapMesh {
             .map_err(|e| bad(format!("damaged data ({e:?})")))?;
         let mut r = Reader { data: &payload, pos: 0 };
 
-        let (width, height) = (r.u32()?, r.u32()?);
-        let n = r.u32()? as usize;
-        let ring_count = r.u32()? as usize;
-        if width == 0 || height == 0 {
-            return Err(bad("zero-sized image"));
-        }
-        // Each province takes 36 bytes, so a count the payload cannot hold is corrupt.
-        if n > payload.len() / 36 || ring_count > payload.len() / 4 {
-            return Err(bad("counts exceed the data"));
-        }
-
-        let mut provinces = Vec::with_capacity(n);
-        let (mut vertices, mut indices, mut rings) = (Vec::with_capacity(n), Vec::with_capacity(n), Vec::with_capacity(n));
-        for id in 0..n {
-            let c = r.u32()?.to_le_bytes();
-            provinces.push(ProvinceInfo {
-                id: id as u32,
-                color: [c[0], c[1], c[2]],
-                pixel_count: r.u32()?,
-                bbox: [r.u32()?, r.u32()?, r.u32()?, r.u32()?],
-            });
-            vertices.push(r.u32()? as usize);
-            let i = r.u32()? as usize;
-            if i % 3 != 0 {
-                return Err(bad("index count is not a multiple of 3"));
-            }
-            indices.push(i);
-            rings.push(r.u32()? as usize);
-        }
-        let sum = |v: &[usize]| v.iter().try_fold(0usize, |a, &b| a.checked_add(b)).ok_or_else(|| bad("counts overflow"));
-        let (total_vertices, total_indices, total_rings) = (sum(&vertices)?, sum(&indices)?, sum(&rings)?);
-        if total_rings != ring_count {
-            return Err(bad("ring counts disagree"));
-        }
-
-        let ring_lens = r.u32s(ring_count)?;
-        let total_points: usize = ring_lens.iter().try_fold(0usize, |a, &b| a.checked_add(b as usize)).ok_or_else(|| bad("counts overflow"))?;
-        if ring_lens.iter().any(|&l| l < 3) {
-            return Err(bad("a ring has fewer than 3 points"));
-        }
-        let positions = r.f32s(total_vertices.checked_mul(2).ok_or_else(|| bad("too large"))?)?;
-        let local = r.u32s(total_indices)?;
-        let line_positions = r.f32s(total_points.checked_mul(2).ok_or_else(|| bad("too large"))?)?;
-        if r.pos != payload.len() {
-            return Err(bad("unexpected trailing data"));
-        }
-        if u32::try_from(total_vertices).is_err() || u32::try_from(total_points).is_err() {
-            return Err(bad("too many vertices"));
-        }
-
-        // Rebuild what was not stored.
-        let mut vertex_province = Vec::with_capacity(total_vertices);
-        let mut global = Vec::with_capacity(total_indices);
-        let (mut base, mut next) = (0u32, 0usize);
-        for id in 0..n {
-            vertex_province.extend(std::iter::repeat_n(id as u32, vertices[id]));
-            for &i in &local[next..next + indices[id]] {
-                if i as usize >= vertices[id] {
-                    return Err(bad("a triangle refers to a missing vertex"));
-                }
-                global.push(base + i);
-            }
-            next += indices[id];
-            base += vertices[id] as u32;
-        }
-
-        let mut ring_starts = Vec::with_capacity(ring_count + 1);
-        ring_starts.push(0u32);
-        let mut line_indices = Vec::with_capacity(total_points * 2);
-        let mut line_ranges = Vec::with_capacity(n);
-        let mut province_rings = Vec::with_capacity(n);
-        let mut ring = 0usize;
-        for id in 0..n {
-            let first_ring = ring as u32;
-            let line_start = line_indices.len() as u32;
-            for _ in 0..rings[id] {
-                let start = *ring_starts.last().unwrap();
-                let len = ring_lens[ring];
-                for i in 0..len {
-                    line_indices.push(start + i);
-                    line_indices.push(start + (i + 1) % len);
-                }
-                ring_starts.push(start + len);
-                ring += 1;
-            }
-            province_rings.push([first_ring, rings[id] as u32]);
-            line_ranges.push([line_start, line_indices.len() as u32 - line_start]);
-        }
+        let header = read_header(&mut r, payload.len())?;
+        let counts = read_provinces(&mut r, &header)?;
+        let (ring_lens, total_points) = read_ring_lengths(&mut r, header.ring_count)?;
+        let geometry = read_geometry_arrays(&mut r, &counts, total_points, payload.len())?;
+        let triangles = rebuild_triangle_indices(&counts, &geometry.local_indices)?;
+        let borders = rebuild_borders(&counts, &ring_lens);
 
         Ok(MapMesh {
-            width,
-            height,
-            provinces,
-            positions,
-            vertex_province,
-            indices: global,
-            line_positions,
-            line_indices,
-            line_ranges,
-            ring_starts,
-            province_rings,
+            width: header.width,
+            height: header.height,
+            provinces: counts.provinces,
+            positions: geometry.positions,
+            vertex_province: triangles.vertex_province,
+            indices: triangles.indices,
+            line_positions: geometry.line_positions,
+            line_indices: borders.line_indices,
+            line_ranges: borders.line_ranges,
+            ring_starts: borders.ring_starts,
+            province_rings: borders.province_rings,
         })
     }
 }

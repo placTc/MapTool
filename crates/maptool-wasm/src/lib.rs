@@ -522,6 +522,19 @@ impl MapDocument {
         Ok(((r as u32) << 16) | ((g as u32) << 8) | b as u32)
     }
 
+    /// A country's three-letter tag, or "" if none is set. Always "" for a strategic region.
+    #[wasm_bindgen(js_name = groupTag)]
+    pub fn group_tag(&self, kind: u8, id: u32) -> Result<String, JsError> {
+        Ok(self.group(kind, id)?.tag.clone())
+    }
+
+    /// Set a country's tag (three letters, case-insensitively unique among countries), or
+    /// clear it with a blank string. Errors for a strategic region.
+    #[wasm_bindgen(js_name = setGroupTag)]
+    pub fn set_group_tag(&mut self, kind: u8, id: u32, tag: &str) -> Result<(), JsError> {
+        self.0.groups_mut(kind_of(kind)?).set_tag(id, tag).map_err(js_err)
+    }
+
     /// The state ids in a group, ascending.
     #[wasm_bindgen(js_name = groupStates)]
     pub fn group_states(&self, kind: u8, id: u32) -> Result<Vec<u32>, JsError> {

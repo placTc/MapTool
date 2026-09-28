@@ -62,6 +62,7 @@
               title="State color"
               onchange={(e) => mutate(() => doc.setStateColor(s.id, unhex(e.currentTarget.value)))}
             />
+            <span class="uid" title="State ID">#{s.id}</span>
             <input
               class="name"
               type="text"
@@ -175,6 +176,14 @@
   .name:focus {
     border-color: #363b45;
     background: #14161a;
+  }
+  .uid {
+    flex: none;
+    width: 40px;
+    text-align: center;
+    color: #9aa3ad;
+    font-size: 12px;
+    font-family: ui-monospace, monospace;
   }
   button {
     background: #363b45;

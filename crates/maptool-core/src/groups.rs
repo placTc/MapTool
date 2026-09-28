@@ -47,6 +47,34 @@ pub struct Group {
     pub color: [u8; 3],
     /// State ids in ascending order.
     pub states: Vec<u32>,
+    /// A country's three-letter tag (empty until one is set, or none could be made). Always
+    /// empty for a strategic region: only countries have one.
+    pub tag: String,
+}
+
+/// Whether `tag` is a well-formed country tag: three ASCII letters, already upper-cased.
+fn is_tag(tag: &str) -> bool {
+    tag.len() == 3 && tag.chars().all(|c| c.is_ascii_uppercase())
+}
+
+/// A country tag from its name: the first three letters that are not already `taken`, tried
+/// as combinations of the name's letters in order — first the leading three, then the third
+/// letter moved forward through the rest of the name, then (once that is exhausted) the
+/// second letter moved forward with the third scanning again after it, then the first letter
+/// too. Empty if the name has fewer than three letters or every combination is taken.
+fn auto_tag(name: &str, taken: impl Fn(&str) -> bool) -> String {
+    let letters: Vec<char> = name.chars().filter(|c| c.is_ascii_alphabetic()).map(|c| c.to_ascii_uppercase()).collect();
+    for i in 0..letters.len() {
+        for j in i + 1..letters.len() {
+            for k in j + 1..letters.len() {
+                let candidate: String = [letters[i], letters[j], letters[k]].into_iter().collect();
+                if !taken(&candidate) {
+                    return candidate;
+                }
+            }
+        }
+    }
+    String::new()
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -140,9 +168,35 @@ impl GroupSet {
             GroupKind::Country => id,
             GroupKind::Region => id + 1000,
         };
-        self.groups.push(Group { id, name, description: String::new(), color: auto_color(seed), states: Vec::new() });
+        let tag = match self.kind {
+            GroupKind::Country => auto_tag(&name, |t| self.groups.iter().any(|g| g.tag == t)),
+            GroupKind::Region => String::new(),
+        };
+        self.groups.push(Group { id, name, description: String::new(), color: auto_color(seed), states: Vec::new(), tag });
         self.assign(id, states, exists)?;
         Ok(id)
+    }
+
+    /// Set a country's tag: three letters, unique (case-insensitively) among countries, or
+    /// blank to clear it. Only countries have a tag; a region rejects any.
+    pub fn set_tag(&mut self, id: u32, tag: &str) -> Result<(), Error> {
+        if self.kind != GroupKind::Country {
+            return Err(invalid(format!("a {} has no tag", self.kind.noun())));
+        }
+        let i = self.index(id)?;
+        let up = tag.trim().to_ascii_uppercase();
+        if up.is_empty() {
+            self.groups[i].tag = String::new();
+            return Ok(());
+        }
+        if !is_tag(&up) {
+            return Err(invalid("a country's tag must be three letters"));
+        }
+        if self.groups.iter().any(|g| g.id != id && g.tag == up) {
+            return Err(invalid(format!("tag {up} is already used by another country")));
+        }
+        self.groups[i].tag = up;
+        Ok(())
     }
 
     /// Put `states` into group `id`, taking them out of whichever group held them.
@@ -224,8 +278,9 @@ impl GroupSet {
     // ---------------------------------------------------------------- saving
     //
     //   next id, group count                                     2 x u32
-    //   per group: id, r g b 0, name, description (each u32 length
-    //              + UTF-8), state count, state ids               u32 each
+    //   per group: id, r g b 0, name, description, tag (each u32
+    //              length + UTF-8; a region's tag is always empty),
+    //              state count, state ids                         u32 each
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -236,6 +291,7 @@ impl GroupSet {
             put(&mut out, u32::from_le_bytes([g.color[0], g.color[1], g.color[2], 0]));
             put_text(&mut out, &g.name);
             put_text(&mut out, &g.description);
+            put_text(&mut out, &g.tag);
             put(&mut out, g.states.len() as u32);
             for &s in &g.states {
                 put(&mut out, s);
@@ -250,7 +306,7 @@ impl GroupSet {
         let mut r = Reader { data: bytes, pos: 0 };
         let next_id = r.u32()?;
         let count = r.u32()? as usize;
-        if count > bytes.len() / 20 {
+        if count > bytes.len() / 24 {
             return Err(bad(format!("{} count exceeds the data", kind.noun())));
         }
         let mut set = GroupSet::new(kind);
@@ -260,6 +316,7 @@ impl GroupSet {
             let c = r.u32()?.to_le_bytes();
             let name = read_text(&mut r, "a name")?;
             let description = read_text(&mut r, "a description")?;
+            let tag = read_text(&mut r, "a tag")?;
             let n = r.u32()? as usize;
             let states = r.u32s(n)?;
             if id >= next_id || set.groups.iter().any(|g| g.id == id) {
@@ -267,6 +324,14 @@ impl GroupSet {
             }
             if !states.windows(2).all(|w| w[0] < w[1]) {
                 return Err(bad(format!("the states of a {} are not sorted and unique", kind.noun())));
+            }
+            match kind {
+                GroupKind::Country if !tag.is_empty() && !is_tag(&tag) => return Err(bad("a country tag is not three letters")),
+                GroupKind::Country if !tag.is_empty() && set.groups.iter().any(|g| g.tag == tag) => {
+                    return Err(bad(format!("tag {tag} is repeated")));
+                }
+                GroupKind::Region if !tag.is_empty() => return Err(bad("a strategic region has a tag")),
+                _ => {}
             }
             for &s in &states {
                 if !exists(s) {
@@ -276,7 +341,7 @@ impl GroupSet {
                     return Err(bad(format!("state {s} is in two {}s", kind.noun())));
                 }
             }
-            set.groups.push(Group { id, name, description, color: [c[0], c[1], c[2]], states });
+            set.groups.push(Group { id, name, description, color: [c[0], c[1], c[2]], states, tag });
         }
         if r.pos != bytes.len() {
             return Err(bad("unexpected trailing data"));

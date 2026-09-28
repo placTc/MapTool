@@ -1,4 +1,4 @@
-use maptool_core::{Document, Error, GroupKind, Kind, Level, Options, PixelFormat, StateSet, Unit, ViewMode, filter, mesh};
+use maptool_core::{Document, Error, GroupKind, GroupSet, Kind, Level, Options, PixelFormat, StateSet, Unit, ViewMode, filter, mesh};
 
 fn rgb(colors: &[u32]) -> Vec<u8> {
     colors.iter().flat_map(|&c| [(c >> 16) as u8, (c >> 8) as u8, c as u8]).collect()
@@ -127,6 +127,125 @@ fn groups_can_be_renamed_recolored_described_and_deleted() {
     let again = d.create_group(COUNTRY, "Again", &[s]).unwrap();
     assert!(again > c, "ids are never reused");
     assert_eq!(d.regions.group_of(s), Some(r), "deleting a country does not touch regions");
+}
+
+// ------------------------------------------------------------ country tags
+
+#[test]
+fn a_country_gets_a_three_letter_tag_from_its_name() {
+    let mut set = GroupSet::new(COUNTRY);
+    // Five letters give ten possible combinations; the first three go to the first three
+    // countries named the same, in the order described: leading three, then the third letter
+    // moved forward, then the second, then the first.
+    let ids: Vec<u32> = (0..5).map(|_| set.create("ABCDE", &[], |_| true).unwrap()).collect();
+    let tags: Vec<String> = ids.iter().map(|&id| set.get(id).unwrap().tag.clone()).collect();
+    assert_eq!(tags, ["ABC", "ABD", "ABE", "ACD", "ACE"]);
+}
+
+#[test]
+fn a_region_never_gets_a_tag() {
+    let mut set = GroupSet::new(REGION);
+    let id = set.create("Anything", &[], |_| true).unwrap();
+    assert_eq!(set.get(id).unwrap().tag, "");
+    assert!(set.set_tag(id, "ABC").is_err());
+}
+
+#[test]
+fn a_country_with_fewer_than_three_letters_gets_no_tag() {
+    let mut set = GroupSet::new(COUNTRY);
+    let one_letter = set.create("A2", &[], |_| true).unwrap();
+    assert_eq!(set.get(one_letter).unwrap().tag, "", "one letter");
+    let no_letters = set.create("99", &[], |_| true).unwrap();
+    assert_eq!(set.get(no_letters).unwrap().tag, "", "no letters");
+}
+
+#[test]
+fn a_countrys_tag_can_be_set_by_hand() {
+    let mut set = GroupSet::new(COUNTRY);
+    let a = set.create("Aria", &[], |_| true).unwrap();
+    let b = set.create("Borea", &[], |_| true).unwrap();
+    let b_tag = set.get(b).unwrap().tag.clone();
+    assert!(set.set_tag(a, "xy").is_err(), "not three letters");
+    assert!(set.set_tag(a, "A1C").is_err(), "not all letters");
+    assert!(set.set_tag(a, &b_tag).is_err(), "taken by another country");
+    set.set_tag(a, " zzz ").unwrap();
+    assert_eq!(set.get(a).unwrap().tag, "ZZZ", "trimmed and upper-cased");
+    set.set_tag(a, "").unwrap();
+    assert_eq!(set.get(a).unwrap().tag, "", "blank clears it");
+    assert!(set.set_tag(99, "ZZZ").is_err());
+}
+
+#[test]
+fn a_countrys_tag_survives_saving() {
+    let mut d = grid(2, 1, 4);
+    let s = d.states.create("S", &[0]).unwrap();
+    let c = d.create_group(COUNTRY, "Aria", &[s]).unwrap();
+    assert_eq!(d.countries.get(c).unwrap().tag, "ARI");
+    d.groups_mut(COUNTRY).set_tag(c, "XYZ").unwrap();
+    assert_eq!(Document::from_bytes(&d.to_bytes()).unwrap(), d);
+    let mut fresh = Document::new(d.mesh.clone());
+    fresh.set_edits_from_bytes(&d.edits_to_bytes()).unwrap();
+    assert_eq!(fresh, d);
+    assert_eq!(fresh.countries.get(c).unwrap().tag, "XYZ");
+}
+
+fn put_u32(out: &mut Vec<u8>, v: u32) {
+    out.extend_from_slice(&v.to_le_bytes());
+}
+
+fn put_text(out: &mut Vec<u8>, s: &str) {
+    put_u32(out, s.len() as u32);
+    out.extend_from_slice(s.as_bytes());
+}
+
+/// Bytes for one group named "Name" with the given tag and no states, as [`GroupSet::to_bytes`] writes them.
+fn one_group_bytes(tag: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_u32(&mut out, 2);
+    put_u32(&mut out, 1);
+    put_u32(&mut out, 1);
+    put_u32(&mut out, 0);
+    put_text(&mut out, "Name");
+    put_text(&mut out, "");
+    put_text(&mut out, tag);
+    put_u32(&mut out, 0);
+    out
+}
+
+/// Bytes for two groups, ids 1 and 2, with the given tags and no states.
+fn two_group_bytes(tag1: &str, tag2: &str) -> Vec<u8> {
+    let mut out = Vec::new();
+    put_u32(&mut out, 3);
+    put_u32(&mut out, 2);
+    for (id, tag) in [(1u32, tag1), (2, tag2)] {
+        put_u32(&mut out, id);
+        put_u32(&mut out, 0);
+        put_text(&mut out, "Name");
+        put_text(&mut out, "");
+        put_text(&mut out, tag);
+        put_u32(&mut out, 0);
+    }
+    out
+}
+
+#[test]
+fn a_malformed_country_tag_is_rejected() {
+    let exists = |_: u32| true;
+    assert!(GroupSet::from_bytes(&one_group_bytes("AB"), COUNTRY, exists).is_err(), "too short");
+    assert!(GroupSet::from_bytes(&one_group_bytes("ABCD"), COUNTRY, exists).is_err(), "too long");
+    assert!(GroupSet::from_bytes(&one_group_bytes("abc"), COUNTRY, exists).is_err(), "must be upper case");
+    assert!(GroupSet::from_bytes(&one_group_bytes("A1C"), COUNTRY, exists).is_err(), "must be letters");
+    assert!(GroupSet::from_bytes(&one_group_bytes(""), COUNTRY, exists).is_ok(), "blank is fine");
+    assert!(GroupSet::from_bytes(&one_group_bytes("ABC"), REGION, exists).is_err(), "a region has no tag");
+    assert!(GroupSet::from_bytes(&one_group_bytes(""), REGION, exists).is_ok());
+}
+
+#[test]
+fn a_repeated_country_tag_is_rejected() {
+    let exists = |_: u32| true;
+    assert!(GroupSet::from_bytes(&two_group_bytes("ABC", "ABC"), COUNTRY, exists).is_err());
+    assert!(GroupSet::from_bytes(&two_group_bytes("ABC", "ABD"), COUNTRY, exists).is_ok());
+    assert!(GroupSet::from_bytes(&two_group_bytes("", ""), COUNTRY, exists).is_ok(), "blank tags don't collide");
 }
 
 #[test]

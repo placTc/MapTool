@@ -20,7 +20,7 @@ const MAGIC: &[u8; 4] = b"MTMP";
 /// The one format this build reads and writes. There is no compatibility with other layouts
 /// while the app is in development: change any saved layout freely, but bump this number when
 /// you do, so files from before are refused with a clear message instead of misread.
-const FORMAT_VERSION: u32 = 2;
+const FORMAT_VERSION: u32 = 3;
 const MAX_MAP_NAME_CHARS: usize = 100;
 
 /// Whether `bytes` look like a saved map (as opposed to an image file).

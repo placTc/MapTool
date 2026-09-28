@@ -56,6 +56,16 @@ corner rules) -> `build` (chains linked into rings; SVG paths or flattened rings
   regions are independent of each other; a sea province's biome is always Sea (the land biome is
   kept underneath and comes back if it becomes land); a province's "number" is the CSV ID if one was
   imported, else its 0-based position; single-pixel exclaves and four-way junctions are rejected.
+- **States and regions get a sequential ID**, shown as "#id" in their panel: it is just their
+  internal `id`, assigned once at creation and never reused (`StatesPanel.svelte`,
+  `GroupsPanel.svelte`). A country instead gets a three-letter tag (`Group::tag`, `auto_tag` in
+  `groups.rs`): the first three letters of its name that no other country's tag already uses, tried
+  as combinations of the name's letters — the leading three first, then the third letter moved
+  through the rest of the name, then (once that is exhausted) the second letter moved with the
+  third scanning again after it, then the first letter too. Blank if the name has under three
+  letters or every combination is taken; the user can then set one by hand (`setGroupTag`), which
+  also accepts any blank-then-retype. A tag is fixed once set: renaming a country does not
+  recompute it. A region's tag is always blank and rejects being set.
 - **One saved format, no compatibility.** The app is in development, not production, so a saved file is
   only read by the build that wrote it. The container has a single number (`FORMAT_VERSION` in
   `document.rs`) and files with any other number are refused with "saved by another version of this app".
@@ -74,7 +84,7 @@ corner rules) -> `build` (chains linked into rings; SVG paths or flattened rings
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # needed in Claude's shell; the user's shell has it
-cargo test --workspace                 # ~97 tests: csv 13, document 29, groups 24, vectorize 31
+cargo test --workspace                 # ~104 tests: csv 13, document 29, groups 31, vectorize 31
 cargo clippy --workspace
 cargo run --release -p maptool-core --example bench    # timings on a synthetic 5632x2048 map
 cargo run --release -p maptool-cli -- map.png -o map.svg

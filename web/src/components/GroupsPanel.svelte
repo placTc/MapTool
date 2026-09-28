@@ -32,6 +32,7 @@
       return {
         id,
         name: doc.groupName(kind, id),
+        tag: kind === 0 ? doc.groupTag(kind, id) : '',
         color: hex(doc.groupColor(kind, id)),
         description: doc.groupDescription(kind, id),
         states,
@@ -119,6 +120,19 @@
             title="Color"
             onchange={(e) => mutate(() => doc.setGroupColor(kind, g.id, unhex(e.currentTarget.value)))}
           />
+          {#if kind === 0}
+            <input
+              class="tag"
+              type="text"
+              maxlength="3"
+              placeholder="TAG"
+              value={g.tag}
+              title="Three-letter country tag"
+              onchange={(e) => mutate(() => doc.setGroupTag(kind, g.id, e.currentTarget.value))}
+            />
+          {:else}
+            <span class="uid" title="Region ID">#{g.id}</span>
+          {/if}
           <input
             class="name"
             type="text"
@@ -257,6 +271,21 @@
   .name:focus {
     border-color: #363b45 !important;
     background: #14161a !important;
+  }
+  .tag {
+    width: 44px;
+    flex: none;
+    text-align: center;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+  }
+  .uid {
+    flex: none;
+    width: 44px;
+    text-align: center;
+    color: #9aa3ad;
+    font-size: 12px;
+    font-family: ui-monospace, monospace;
   }
   button {
     background: #2f6fed;

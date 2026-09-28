@@ -321,7 +321,7 @@ fn damaged_map_files_are_rejected_without_panicking() {
 #[test]
 fn a_file_from_another_format_is_refused_with_a_clear_message() {
     // There is one format; anything else, older or newer, is refused rather than misread.
-    for other in [1u32, 3, 99] {
+    for other in [1u32, 2, 99] {
         let mut bytes = grid(2, 1, 4, &exact()).to_bytes();
         bytes[4..8].copy_from_slice(&other.to_le_bytes());
         let err = Document::from_bytes(&bytes).unwrap_err().to_string();

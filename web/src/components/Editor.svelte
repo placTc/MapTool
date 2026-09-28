@@ -32,6 +32,19 @@
   let selectedStates = $state.raw(new Set<number>());
   let hoverProvince = $state<number | null>(null);
   let toast = $state('');
+  /** The result of the last CSV import, shown until dismissed. */
+  let csvReport = $state<{
+    file: string;
+    rows: number;
+    matched: number;
+    land: number;
+    sea: number;
+    unlisted: number;
+    hasTypes: boolean;
+    hasIds: boolean;
+    problemCount: number;
+    problems: string[];
+  } | null>(null);
   let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   function showError(e: unknown) {
@@ -82,6 +95,7 @@
     const s = doc.stateOf(p);
     return {
       id: p,
+      number: doc.provinceNumber(p),
       name: doc.provinceName(p),
       sea: doc.provinceKind(p) === 1,
       biome: biomes[doc.provinceBiome(p)],
@@ -313,6 +327,38 @@
     requestDraw();
   }
 
+  async function importCsv(file: File) {
+    let text: string;
+    try {
+      text = await file.text();
+    } catch (e) {
+      showError(e);
+      return;
+    }
+    // A refused import throws, changes nothing, and the reason goes to the toast.
+    const report = mutate(() => doc.importCsv(text));
+    if (!report) return;
+    csvReport = {
+      file: file.name,
+      rows: report.rows,
+      matched: report.matched,
+      land: report.land,
+      sea: report.sea,
+      unlisted: report.unlisted,
+      hasTypes: report.hasTypes,
+      hasIds: report.hasIds,
+      problemCount: report.problemCount,
+      problems: report.problems(),
+    };
+    report.free();
+  }
+
+  function csvPicked(e: Event & { currentTarget: HTMLInputElement }) {
+    const f = e.currentTarget.files?.[0];
+    e.currentTarget.value = ''; // let the same file be picked again
+    if (f) importCsv(f);
+  }
+
   function onKey(e: KeyboardEvent) {
     const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
     if (e.key === 'Escape' && !typing) clearSelection();
@@ -357,6 +403,10 @@
 
     <button class="secondary" onclick={fit}>Fit</button>
     <button class="secondary" onclick={() => zoomToProvinces(highlighted)} disabled={highlighted.size === 0}>Zoom to selection</button>
+    <label class="button secondary" title="Load a CSV that gives each province's type (land or sea) and ID by its hex color">
+      Import CSV
+      <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" onchange={csvPicked} hidden />
+    </label>
     <button class="secondary" onclick={ondownload} title="Save the map, with its states and province details, as a file">Download map</button>
     <span class="status">{status}</span>
   </header>
@@ -380,7 +430,7 @@
           {:else}
             <strong>{hoverInfo.name}</strong>
             <span>
-              #{hoverInfo.id} · {hoverInfo.sea ? 'sea' : `land, ${hoverInfo.biome.toLowerCase()}`}{hoverInfo.population !== undefined
+              #{hoverInfo.number} · {hoverInfo.sea ? 'sea' : `land, ${hoverInfo.biome.toLowerCase()}`}{hoverInfo.population !== undefined
                 ? ` · pop. ${hoverInfo.population.toLocaleString()}`
                 : ''}{hoverInfo.state ? ` · ${hoverInfo.state}` : ''}
             </span>
@@ -389,6 +439,30 @@
       {/if}
 
       {#if toast}<div class="toast" role="alert">{toast}</div>{/if}
+
+      {#if csvReport}
+        <div class="report" role="dialog" aria-label="CSV import result">
+          <h3>Imported {csvReport.file}</h3>
+          <p>
+            {csvReport.matched.toLocaleString()} of {csvReport.rows.toLocaleString()} rows applied
+            {#if csvReport.hasTypes}· {csvReport.land.toLocaleString()} land, {csvReport.sea.toLocaleString()} sea{/if}
+            {#if csvReport.hasIds}· IDs set{/if}
+          </p>
+          {#if csvReport.unlisted > 0}
+            <p class="note">{csvReport.unlisted.toLocaleString()} provinces of this map were not in the file and keep what they had.</p>
+          {/if}
+          {#if csvReport.problemCount > 0}
+            <p class="warn">{csvReport.problemCount.toLocaleString()} {csvReport.problemCount === 1 ? 'row was' : 'rows were'} skipped:</p>
+            <ul>
+              {#each csvReport.problems as p}<li>{p}</li>{/each}
+              {#if csvReport.problemCount > csvReport.problems.length}
+                <li>…and {(csvReport.problemCount - csvReport.problems.length).toLocaleString()} more</li>
+              {/if}
+            </ul>
+          {/if}
+          <button onclick={() => (csvReport = null)}>OK</button>
+        </div>
+      {/if}
     </section>
 
     <aside>
@@ -447,9 +521,15 @@
     cursor: pointer;
     font: inherit;
   }
-  button.secondary {
+  button.secondary,
+  label.button.secondary {
     background: #363b45;
     color: inherit;
+  }
+  label.button {
+    border-radius: 4px;
+    padding: 5px 11px;
+    cursor: pointer;
   }
   button:disabled {
     opacity: 0.5;
@@ -523,6 +603,42 @@
   .tip span {
     color: #9aa3ad;
     font-size: 12px;
+  }
+  .report {
+    position: absolute;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: min(560px, 90%);
+    max-height: 80%;
+    overflow-y: auto;
+    background: #1d2026;
+    border: 1px solid #363b45;
+    border-radius: 8px;
+    padding: 14px 18px;
+    box-shadow: 0 8px 30px rgba(0, 0, 0, 0.5);
+  }
+  .report h3 {
+    margin: 0 0 8px;
+    font-size: 15px;
+  }
+  .report p {
+    margin: 4px 0;
+  }
+  .report .note {
+    color: #9aa3ad;
+  }
+  .report .warn {
+    color: #ffb86b;
+    margin-top: 10px;
+  }
+  .report ul {
+    margin: 4px 0 12px;
+    padding-left: 18px;
+    font-size: 12px;
+    color: #c8ccd2;
+    max-height: 220px;
+    overflow-y: auto;
   }
   .toast {
     position: absolute;

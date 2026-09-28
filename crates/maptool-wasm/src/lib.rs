@@ -242,6 +242,21 @@ impl MapDocument {
 
     // ---- province metadata
 
+    /// The province's number: the one imported from a CSV, or else its position in the map.
+    /// This is what an unnamed province is called.
+    #[wasm_bindgen(js_name = provinceNumber)]
+    pub fn province_number(&self, id: u32) -> u32 {
+        self.0.provinces.number(id)
+    }
+
+    /// Apply a CSV of hex colors with province types and IDs (see the README for the
+    /// format). Rows are matched to provinces by source color. Throws, changing nothing,
+    /// if no row can be applied.
+    #[wasm_bindgen(js_name = importCsv)]
+    pub fn import_csv(&mut self, text: &str) -> Result<CsvReport, JsError> {
+        self.0.import_csv(text).map(CsvReport).map_err(js_err)
+    }
+
     /// The province's name, or its number when it has none.
     #[wasm_bindgen(js_name = provinceName)]
     pub fn province_name(&self, id: u32) -> String {
@@ -421,6 +436,62 @@ impl MapDocument {
 
     fn state(&self, id: u32) -> Result<&maptool_core::State, JsError> {
         self.0.states.get(id).ok_or_else(|| js_err(format!("no state {id}")))
+    }
+}
+
+/// What a CSV import did.
+#[wasm_bindgen]
+pub struct CsvReport(maptool_core::CsvReport);
+
+#[wasm_bindgen]
+impl CsvReport {
+    /// Data rows read, not counting a header.
+    #[wasm_bindgen(getter)]
+    pub fn rows(&self) -> usize {
+        self.0.rows
+    }
+
+    /// Rows applied to a province.
+    #[wasm_bindgen(getter)]
+    pub fn matched(&self) -> usize {
+        self.0.matched
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn land(&self) -> usize {
+        self.0.land
+    }
+
+    #[wasm_bindgen(getter)]
+    pub fn sea(&self) -> usize {
+        self.0.sea
+    }
+
+    /// Provinces of the map that no applied row mentioned.
+    #[wasm_bindgen(getter)]
+    pub fn unlisted(&self) -> usize {
+        self.0.unlisted
+    }
+
+    #[wasm_bindgen(getter, js_name = hasTypes)]
+    pub fn has_types(&self) -> bool {
+        self.0.has_types
+    }
+
+    #[wasm_bindgen(getter, js_name = hasIds)]
+    pub fn has_ids(&self) -> bool {
+        self.0.has_ids
+    }
+
+    /// The true number of problems, which may be larger than `problems().length`.
+    #[wasm_bindgen(getter, js_name = problemCount)]
+    pub fn problem_count(&self) -> usize {
+        self.0.problem_count
+    }
+
+    /// The problems found, one line each (at most 200).
+    pub fn problems(&self) -> Vec<String> {
+        self.0.problems.clone()
     }
 }
 

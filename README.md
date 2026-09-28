@@ -60,11 +60,33 @@ provinces; drag pans, the wheel zooms, Esc clears the selection.
   the selection to an existing state, rename or recolor it, or delete it. A province is in
   at most one state: putting it in another moves it.
 - *Province details*: name (blank shows the province number), description, land or sea,
-  biome, and population. Type and biome can be set on many provinces at once.
+  biome, and population. Type and biome can be set on many provinces at once. A sea
+  province's biome is always **Sea** and is locked; making it land again brings back the
+  biome it had. In a bulk biome edit, sea provinces are skipped.
+- *Map name*: click the name at the top left to rename the map. It is saved with the map
+  (in the recent list, in autosave, and inside downloaded files), so it no longer depends on
+  what the image file was called.
+- *Import CSV*: gives each province its type and its own ID by hex color (see below).
 - *Views*: **Provinces** shows every province and can color by source colors, state,
   land/sea, or biome. **States** shows states instead of provinces: borders inside a
   state disappear, hovering or clicking anywhere on a state picks the whole state, and
   provinces in no state stay separate (dimmed).
+
+**Import CSV.** Load a CSV whose rows give a hex color, a province type (`land` or `sea`),
+and the province's own ID (a whole number). Rows are matched to provinces by the color in the
+image, and the ID becomes the province's number: it is shown as `#ID` and is the province's
+name when it has none.
+
+- Columns can come in any order, separated by commas, semicolons or tabs, with or without a
+  header row. Headers named like `color`/`hex`, `type`, and `id`/`number` are recognised;
+  otherwise the columns are worked out from the data. Colors may be `#1a2b3c`, `1a2b3c` or
+  `0x1a2b3c`. Either the type or the ID column may be left out.
+- A row with a bad value, a color that is not in the map, or a color or ID that an earlier row
+  already used is skipped and listed in a report; the other rows are applied. If no row
+  matches, nothing changes and you are told why.
+- Importing replaces earlier IDs; types only change for provinces the file lists.
+- A file with separate red, green and blue columns (such as a Clausewitz `definition.csv`) is
+  not read directly; it needs a single hex color column.
 
 **Saving.** Opened maps are kept in this browser's IndexedDB (localStorage is limited to
 a few MB of text and cannot hold them), as the finished geometry, so reopening a recent

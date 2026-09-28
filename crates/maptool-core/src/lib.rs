@@ -5,6 +5,7 @@
 //! overlaps between them.
 
 mod build;
+mod csv;
 mod document;
 mod label;
 mod mesh;
@@ -16,6 +17,7 @@ mod validate;
 
 use std::fmt::{self, Write};
 
+pub use csv::CsvReport;
 pub use document::{Document, StateStats, ViewMode, biome_names, is_map_file};
 pub use mesh::{MapMesh, ProvinceInfo};
 pub use provinces::{Biome, Kind, ProvinceMeta, ProvinceTable};

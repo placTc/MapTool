@@ -110,6 +110,9 @@ pub struct ProvinceMeta {
     /// again brings it back; read the real biome through [`ProvinceMeta::biome`].
     land_biome: Biome,
     pub population: Option<u64>,
+    /// The province's own number, from an imported CSV. `None` means "use its position
+    /// in the map"; read the effective number through [`ProvinceTable::number`].
+    number: Option<u32>,
 }
 
 impl ProvinceMeta {
@@ -121,7 +124,7 @@ impl ProvinceMeta {
 
 impl Default for ProvinceMeta {
     fn default() -> Self {
-        ProvinceMeta { name: None, description: None, kind: Kind::Land, land_biome: Biome::Plains, population: None }
+        ProvinceMeta { name: None, description: None, kind: Kind::Land, land_biome: Biome::Plains, population: None, number: None }
     }
 }
 
@@ -167,9 +170,27 @@ impl ProvinceTable {
         self.items.get(id as usize)
     }
 
+    /// The province's number: the one imported from a CSV, or else its position in the map.
+    pub fn number(&self, id: u32) -> u32 {
+        self.get(id).and_then(|m| m.number).unwrap_or(id)
+    }
+
     /// The name, or the province number when it has none.
     pub fn display_name(&self, id: u32) -> String {
-        self.get(id).and_then(|m| m.name.clone()).unwrap_or_else(|| id.to_string())
+        self.get(id).and_then(|m| m.name.clone()).unwrap_or_else(|| self.number(id).to_string())
+    }
+
+    /// Give a province its own number, or `None` to go back to its position in the map.
+    pub fn set_number(&mut self, id: u32, number: Option<u32>) -> Result<(), Error> {
+        self.at(id)?.number = number;
+        Ok(())
+    }
+
+    /// Forget every imported number.
+    pub fn clear_numbers(&mut self) {
+        for m in &mut self.items {
+            m.number = None;
+        }
     }
 
     fn at(&mut self, id: u32) -> Result<&mut ProvinceMeta, Error> {
@@ -229,16 +250,19 @@ impl ProvinceTable {
     //
     //   version, province count                                  2 x u32
     //   per province: kind, land biome, flags, 0                 4 x u8
-    //     flags: 1 = name, 2 = description, 4 = population
+    //     flags: 1 = name, 2 = description, 4 = population, 8 = number
     //     then, in that order: name (u32 length + UTF-8), description
-    //     (same), population (u64)
+    //     (same), population (u64), number (u32)
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::with_capacity(8 + self.items.len() * 4);
         out.extend_from_slice(&TABLE_VERSION.to_le_bytes());
         out.extend_from_slice(&(self.items.len() as u32).to_le_bytes());
         for m in &self.items {
-            let flags = m.name.is_some() as u8 | (m.description.is_some() as u8) << 1 | (m.population.is_some() as u8) << 2;
+            let flags = m.name.is_some() as u8
+                | (m.description.is_some() as u8) << 1
+                | (m.population.is_some() as u8) << 2
+                | (m.number.is_some() as u8) << 3;
             out.extend_from_slice(&[m.kind as u8, m.land_biome as u8, flags, 0]);
             if let Some(n) = &m.name {
                 put_text(&mut out, n);
@@ -248,6 +272,9 @@ impl ProvinceTable {
             }
             if let Some(p) = m.population {
                 out.extend_from_slice(&p.to_le_bytes());
+            }
+            if let Some(n) = m.number {
+                out.extend_from_slice(&n.to_le_bytes());
             }
         }
         out
@@ -268,7 +295,7 @@ impl ProvinceTable {
         for _ in 0..province_count {
             let head = r.take(4)?;
             let (kind, biome, flags) = (head[0], head[1], head[2]);
-            if flags & !7 != 0 {
+            if flags & !15 != 0 {
                 return Err(bad("unknown province data flags"));
             }
             let kind = Kind::from_u8(kind).ok_or_else(|| bad("unknown province type"))?;
@@ -282,7 +309,8 @@ impl ProvinceTable {
             let name = if flags & 1 != 0 { Some(read_text(&mut r)?) } else { None };
             let description = if flags & 2 != 0 { Some(read_text(&mut r)?) } else { None };
             let population = if flags & 4 != 0 { Some(u64::from_le_bytes(r.take(8)?.try_into().unwrap())) } else { None };
-            items.push(ProvinceMeta { name, description, kind, land_biome, population });
+            let number = if flags & 8 != 0 { Some(r.u32()?) } else { None };
+            items.push(ProvinceMeta { name, description, kind, land_biome, population, number });
         }
         if r.pos != bytes.len() {
             return Err(bad("unexpected trailing data"));

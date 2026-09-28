@@ -1,5 +1,5 @@
 <script lang="ts">
-  import { biomeList, type MapDocument } from '../lib/map';
+  import { biomeList, hex, type MapDocument } from '../lib/map';
 
   interface Props {
     doc: MapDocument;
@@ -19,6 +19,21 @@
   const typed = () => Uint32Array.from(ids);
 
   const single = $derived(ids.length === 1 ? ids[0] : null);
+  /**
+   * What the single-province editor shows. It depends on `rev`, so a change made elsewhere
+   * (a CSV import, say) shows up while the province stays selected.
+   */
+  const detail = $derived.by(() => {
+    rev;
+    if (single === null) return null;
+    return {
+      number: doc.provinceNumber(single),
+      ownName: doc.provinceOwnName(single) ?? '',
+      description: doc.provinceDescription(single),
+      population: doc.provincePopulation(single)?.toString() ?? '',
+      color: hex(doc.color(single)),
+    };
+  });
   const kinds = $derived.by(() => {
     rev;
     return new Set(ids.map((i) => doc.provinceKind(i)));
@@ -90,22 +105,28 @@
     <button class="link" onclick={onclear}>Clear</button>
   </header>
 
-  {#if single !== null}
+  {#if single !== null && detail}
     {#key single}
       <div class="fields">
         <label>
           Name
           <input
             type="text"
-            placeholder={String(single)}
-            value={doc.provinceOwnName(single) ?? ''}
+            placeholder={String(detail.number)}
+            value={detail.ownName}
             onchange={(e) => mutate(() => doc.setProvinceName(single, e.currentTarget.value))}
           />
-          <small>Province #{single}. Left blank, the number is its name.</small>
+          <small>Province #{detail.number}. Left blank, the number is its name.</small>
         </label>
+        <div class="row">
+          <span class="label">Color</span>
+          <span class="swatch" style:background={detail.color}></span>
+          <code>{detail.color}</code>
+          <small>in the image</small>
+        </div>
         <label>
           Description
-          <textarea rows="3" value={doc.provinceDescription(single)} onchange={(e) => mutate(() => doc.setProvinceDescription(single, e.currentTarget.value))}></textarea>
+          <textarea rows="3" value={detail.description} onchange={(e) => mutate(() => doc.setProvinceDescription(single, e.currentTarget.value))}></textarea>
         </label>
         <label>
           Population
@@ -113,7 +134,7 @@
             type="text"
             inputmode="numeric"
             placeholder="not set"
-            value={doc.provincePopulation(single)?.toString() ?? ''}
+            value={detail.population}
             onchange={(e) => commitPopulation(single, e.currentTarget.value)}
           />
         </label>
@@ -225,6 +246,15 @@
   .label {
     width: 52px;
     color: #9aa3ad;
+  }
+  .swatch {
+    width: 16px;
+    height: 16px;
+    border-radius: 3px;
+    border: 1px solid #363b45;
+  }
+  code {
+    font-family: ui-monospace, monospace;
   }
   .seg {
     display: flex;

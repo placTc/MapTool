@@ -6,15 +6,14 @@
 //! cut into *chains* running between anchors; every edge belongs to exactly one
 //! chain, so a border shared by two provinces is traced exactly once.
 
+use crate::geom::LatticePoint;
 use crate::label::Labels;
-
-pub type V = (i32, i32);
 
 pub struct RawChain {
     /// Label on the left-hand side when walking `pts` in order (screen coordinates, y down).
     pub left: u32,
     pub right: u32,
-    pub pts: Vec<V>,
+    pub pts: Vec<LatticePoint>,
     /// A loop with no anchor on it. `pts.first() == pts.last()`.
     pub closed: bool,
 }
@@ -69,7 +68,7 @@ impl Tracer<'_> {
     }
 
     /// Existing edges at a vertex as (edge id, other endpoint).
-    fn incident(&self, x: i32, y: i32) -> ([(usize, V); 4], usize) {
+    fn incident(&self, x: i32, y: i32) -> ([(usize, LatticePoint); 4], usize) {
         let (nw, ne, sw, se) = self.corners(x, y);
         let mut out = [(0, (0, 0)); 4];
         let mut n = 0;
@@ -93,7 +92,7 @@ impl Tracer<'_> {
     }
 
     /// (left, right) labels when walking the edge `u -> v`.
-    fn left_right(&self, u: V, v: V) -> (u32, u32) {
+    fn left_right(&self, u: LatticePoint, v: LatticePoint) -> (u32, u32) {
         let l = self.labels;
         if u.1 == v.1 {
             let x = u.0.min(v.0);
@@ -106,7 +105,7 @@ impl Tracer<'_> {
         }
     }
 
-    fn walk(&mut self, start: V, first: (usize, V)) -> RawChain {
+    fn walk(&mut self, start: LatticePoint, first: (usize, LatticePoint)) -> RawChain {
         let anchored = self.is_anchor(start.0, start.1);
         let (left, right) = self.left_right(start, first.1);
         self.mark(first.0);

@@ -7,6 +7,7 @@
 mod build;
 mod csv;
 mod document;
+mod geom;
 mod groups;
 mod label;
 mod mesh;

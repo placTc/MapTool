@@ -3,19 +3,19 @@
 
 use std::fmt::Write;
 
+use crate::geom::{self, CurvePoint, LatticePoint};
 use crate::label::{Labels, NONE};
-use crate::smooth::{Curve, P};
-use crate::trace::V;
+use crate::smooth::Curve;
 use crate::{Options, smooth, trace};
 
 struct Chain {
     left: u32,
     right: u32,
-    start: V,
-    end: V,
+    start: LatticePoint,
+    end: LatticePoint,
     /// Direction of the first / last crack edge, walking forward.
-    first_dir: V,
-    last_dir: V,
+    first_dir: LatticePoint,
+    last_dir: LatticePoint,
     curve: Curve,
 }
 
@@ -26,15 +26,15 @@ struct Arc {
 }
 
 struct ArcInfo {
-    start: V,
-    end: V,
+    start: LatticePoint,
+    end: LatticePoint,
     /// Direction leaving the start / arriving at the end, in walking order.
-    out_dir: V,
-    in_dir: V,
+    out_dir: LatticePoint,
+    in_dir: LatticePoint,
 }
 
 fn info(c: &Chain, rev: bool) -> ArcInfo {
-    let neg = |d: V| (-d.0, -d.1);
+    let neg = |d: LatticePoint| (-d.0, -d.1);
     if rev {
         ArcInfo { start: c.end, end: c.start, out_dir: neg(c.last_dir), in_dir: neg(c.first_dir) }
     } else {
@@ -44,10 +44,9 @@ fn info(c: &Chain, rev: bool) -> ArcInfo {
 
 /// Signed turn from `d_in` to `d_out`: larger means a sharper left turn
 /// (screen coordinates, y down).
-fn turn(d_in: V, d_out: V) -> f64 {
-    let left = (d_out.0 * d_in.1 - d_out.1 * d_in.0) as f64;
-    let fwd = (d_out.0 * d_in.0 + d_out.1 * d_in.1) as f64;
-    left.atan2(fwd)
+fn turn(d_in: LatticePoint, d_out: LatticePoint) -> f64 {
+    let (in_f, out_f) = (geom::to_curve_point(d_in), geom::to_curve_point(d_out));
+    geom::cross2(out_f, in_f).atan2(geom::dot2(out_f, in_f))
 }
 
 /// The smoothed borders of a whole map: chains shared by neighbouring provinces,
@@ -100,7 +99,7 @@ impl Geometry {
     /// neighbour on the other side reuses the same points reversed, so shared
     /// borders match bit for bit and the two provinces leave no cracks.
     pub fn rings(&self, tolerance: f64) -> Vec<Vec<Vec<[f32; 2]>>> {
-        let flats: Vec<Vec<P>> = self.chains.iter().map(|c| flatten(&c.curve, tolerance)).collect();
+        let flats: Vec<Vec<CurvePoint>> = self.chains.iter().map(|c| flatten(&c.curve, tolerance)).collect();
         self.arcs
             .iter()
             .map(|list| {
@@ -147,7 +146,7 @@ pub fn build_paths(labels: &Labels, opts: &Options) -> Vec<String> {
 /// Join a province's arcs end to start into closed rings.
 fn link_rings(list: &[Arc], chains: &[Chain]) -> Vec<Vec<Arc>> {
     let infos: Vec<ArcInfo> = list.iter().map(|a| info(&chains[a.chain as usize], a.rev)).collect();
-    let mut by_start: Vec<(V, usize)> = infos.iter().enumerate().map(|(i, a)| (a.start, i)).collect();
+    let mut by_start: Vec<(LatticePoint, usize)> = infos.iter().enumerate().map(|(i, a)| (a.start, i)).collect();
     by_start.sort_unstable();
     let mut used = vec![false; list.len()];
     let mut rings = Vec::new();
@@ -185,7 +184,7 @@ fn link_rings(list: &[Arc], chains: &[Chain]) -> Vec<Vec<Arc>> {
 
 /// Points along a curve such that no point of the true curve is farther than
 /// `tol` from the polyline. Includes the start and end points exactly.
-fn flatten(curve: &Curve, tol: f64) -> Vec<P> {
+fn flatten(curve: &Curve, tol: f64) -> Vec<CurvePoint> {
     let mut out = vec![curve.start];
     let mut from = curve.start;
     for s in &curve.segs {
@@ -207,7 +206,7 @@ fn flatten(curve: &Curve, tol: f64) -> Vec<P> {
     out
 }
 
-fn cubic(p0: P, p1: P, p2: P, p3: P, t: f64) -> P {
+fn cubic(p0: CurvePoint, p1: CurvePoint, p2: CurvePoint, p3: CurvePoint, t: f64) -> CurvePoint {
     let u = 1.0 - t;
     let (a, b, c, d) = (u * u * u, 3.0 * u * u * t, 3.0 * u * t * t, t * t * t);
     (a * p0.0 + b * p1.0 + c * p2.0 + d * p3.0, a * p0.1 + b * p1.1 + c * p2.1 + d * p3.1)
@@ -226,13 +225,13 @@ fn push_num(s: &mut String, v: f64, prec: usize) {
     }
 }
 
-fn push_pt(s: &mut String, pt: P, prec: usize) {
+fn push_pt(s: &mut String, pt: CurvePoint, prec: usize) {
     push_num(s, pt.0, prec);
     s.push(' ');
     push_num(s, pt.1, prec);
 }
 
-fn push_move(s: &mut String, pt: P, prec: usize) {
+fn push_move(s: &mut String, pt: CurvePoint, prec: usize) {
     s.push('M');
     push_pt(s, pt, prec);
 }

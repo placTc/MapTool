@@ -1,33 +1,31 @@
 //! Turning a staircase of pixel-corner points into a short chain of curves.
 
 use crate::Options;
-use crate::trace::V;
-
-pub type P = (f64, f64);
+use crate::geom::{self, CurvePoint, LatticePoint};
 
 #[derive(Clone, Copy)]
 pub struct Seg {
-    pub c1: P,
-    pub c2: P,
-    pub to: P,
+    pub c1: CurvePoint,
+    pub c2: CurvePoint,
+    pub to: CurvePoint,
     /// Straight line; `c1`/`c2` are unused.
     pub line: bool,
 }
 
 #[derive(Clone)]
 pub struct Curve {
-    pub start: P,
+    pub start: CurvePoint,
     pub segs: Vec<Seg>,
 }
 
 impl Curve {
     /// Where the curve starts when walked forward or backward.
-    pub fn begin(&self, reversed: bool) -> P {
+    pub fn begin(&self, reversed: bool) -> CurvePoint {
         if reversed { self.segs.last().map_or(self.start, |s| s.to) } else { self.start }
     }
 
     /// Segments in walking order, each as (control 1, control 2, target, is_line).
-    pub fn walk(&self, reversed: bool) -> impl Iterator<Item = (P, P, P, bool)> + '_ {
+    pub fn walk(&self, reversed: bool) -> impl Iterator<Item = (CurvePoint, CurvePoint, CurvePoint, bool)> + '_ {
         let n = self.segs.len();
         (0..n).map(move |k| {
             if reversed {
@@ -43,7 +41,7 @@ impl Curve {
     }
 }
 
-pub fn build_curve(pts: &[V], closed: bool, o: &Options) -> Curve {
+pub fn build_curve(pts: &[LatticePoint], closed: bool, o: &Options) -> Curve {
     let n_edges = pts.len() - 1;
     let mut simp = None;
     if o.tolerance > 0.0 && n_edges >= o.min_chain_len {
@@ -59,46 +57,32 @@ pub fn build_curve(pts: &[V], closed: bool, o: &Options) -> Curve {
     }
 }
 
-fn p(v: V) -> P {
-    (v.0 as f64, v.1 as f64)
-}
-
-fn lines(pts: &[V]) -> Curve {
+fn lines(pts: &[LatticePoint]) -> Curve {
     let segs = pts[1..]
         .iter()
-        .map(|&v| Seg { c1: p(v), c2: p(v), to: p(v), line: true })
+        .map(|&v| {
+            let p = geom::to_curve_point(v);
+            Seg { c1: p, c2: p, to: p, line: true }
+        })
         .collect();
-    Curve { start: p(pts[0]), segs }
+    Curve { start: geom::to_curve_point(pts[0]), segs }
 }
 
 /// Remove points that lie on a straight run, keeping both ends.
-fn drop_collinear(pts: &[V]) -> Vec<V> {
-    let mut out: Vec<V> = Vec::with_capacity(pts.len());
+fn drop_collinear(pts: &[LatticePoint]) -> Vec<LatticePoint> {
+    let mut out: Vec<LatticePoint> = Vec::with_capacity(pts.len());
     for &v in pts {
         while out.len() >= 2 {
             let (a, b) = (out[out.len() - 2], out[out.len() - 1]);
-            let cross = (b.0 - a.0) as i64 * (v.1 - b.1) as i64 - (b.1 - a.1) as i64 * (v.0 - b.0) as i64;
-            if cross == 0 { out.pop(); } else { break; }
+            if geom::signed_area2(a, b, v) == 0 { out.pop(); } else { break; }
         }
         out.push(v);
     }
     out
 }
 
-fn dist_to_segment(q: V, a: V, b: V) -> f64 {
-    let (dx, dy) = ((b.0 - a.0) as f64, (b.1 - a.1) as f64);
-    let (px, py) = ((q.0 - a.0) as f64, (q.1 - a.1) as f64);
-    let len2 = dx * dx + dy * dy;
-    if len2 == 0.0 {
-        return (px * px + py * py).sqrt();
-    }
-    let t = ((px * dx + py * dy) / len2).clamp(0.0, 1.0);
-    let (cx, cy) = (dx * t - px, dy * t - py);
-    (cx * cx + cy * cy).sqrt()
-}
-
 /// Douglas-Peucker on an open polyline (iterative; chains can be very long).
-fn douglas_peucker(pts: &[V], tol: f64) -> Vec<V> {
+fn douglas_peucker(pts: &[LatticePoint], tol: f64) -> Vec<LatticePoint> {
     let n = pts.len();
     if n <= 2 {
         return pts.to_vec();
@@ -110,7 +94,11 @@ fn douglas_peucker(pts: &[V], tol: f64) -> Vec<V> {
     while let Some((a, b)) = stack.pop() {
         let mut far = (0.0, a);
         for i in a + 1..b {
-            let d = dist_to_segment(pts[i], pts[a], pts[b]);
+            let d = geom::distance_to_segment(
+                geom::to_curve_point(pts[i]),
+                geom::to_curve_point(pts[a]),
+                geom::to_curve_point(pts[b]),
+            );
             if d > far.0 {
                 far = (d, i);
             }
@@ -124,7 +112,7 @@ fn douglas_peucker(pts: &[V], tol: f64) -> Vec<V> {
     pts.iter().zip(keep).filter(|&(_, k)| k).map(|(&v, _)| v).collect()
 }
 
-fn simplify(pts: &[V], closed: bool, tol: f64) -> Vec<V> {
+fn simplify(pts: &[LatticePoint], closed: bool, tol: f64) -> Vec<LatticePoint> {
     if !closed {
         return douglas_peucker(pts, tol);
     }
@@ -144,44 +132,35 @@ fn simplify(pts: &[V], closed: bool, tol: f64) -> Vec<V> {
     out
 }
 
-fn unit(a: P, b: P) -> P {
-    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
-    let l = (dx * dx + dy * dy).sqrt();
-    (dx / l, dy / l)
-}
-
 /// A turn at least this sharp is a corner when both sides are long straight runs.
 const RUN_CORNER_DEG: f64 = 75.0;
 
-/// Fit cubic Béziers through the simplified points. Tangents come from the
-/// bisector of the neighbouring segments, and control points sit a third of
-/// the way along each segment so the curve cannot overshoot.
+/// (tangent in, tangent out, smooth) for one vertex of the fitted curve.
+type VertexTangent = (CurvePoint, CurvePoint, bool);
+
+/// Tangent in/out and corner-vs-smooth decision for every vertex of `points`.
 ///
 /// A vertex stays a corner when the turn is beyond `corner_deg`, or when it is
 /// at least `RUN_CORNER_DEG` and both neighbouring segments are `corner_run`
 /// pixels or longer. The second rule is what keeps squares square: after
 /// simplification a square's 4 vertices look like a coarse circle, and only
 /// the long straight sides tell them apart. Chain ends are always corners.
-fn fit(simp: &[V], closed: bool, corner_deg: f64, corner_run: f64) -> Curve {
-    let mut q: Vec<P> = simp.iter().map(|&v| p(v)).collect();
-    if closed {
-        q.pop();
-    }
-    let cnt = q.len();
-    let prev = |i: usize| (i + cnt - 1) % cnt;
-    let next = |i: usize| (i + 1) % cnt;
+fn vertex_tangents(points: &[CurvePoint], closed: bool, corner_deg: f64, corner_run: f64) -> Vec<VertexTangent> {
+    let count = points.len();
+    let prev = |i: usize| (i + count - 1) % count;
+    let next = |i: usize| (i + 1) % count;
 
-    // (tangent in, tangent out, smooth) per vertex.
-    let tang: Vec<(P, P, bool)> = (0..cnt)
+    (0..count)
         .map(|i| {
             let has_prev = closed || i > 0;
-            let has_next = closed || i + 1 < cnt;
+            let has_next = closed || i + 1 < count;
             match (has_prev, has_next) {
                 (true, true) => {
-                    let a = unit(q[prev(i)], q[i]);
-                    let b = unit(q[i], q[next(i)]);
+                    let a = geom::direction(points[prev(i)], points[i]);
+                    let b = geom::direction(points[i], points[next(i)]);
                     let turn = (a.0 * b.0 + a.1 * b.1).clamp(-1.0, 1.0).acos().to_degrees();
-                    let shortest = dist(q[prev(i)], q[i]).min(dist(q[i], q[next(i)]));
+                    let shortest =
+                        geom::distance(points[prev(i)], points[i]).min(geom::distance(points[i], points[next(i)]));
                     if turn > corner_deg || (turn >= RUN_CORNER_DEG && shortest >= corner_run) {
                         return (a, b, false);
                     }
@@ -191,51 +170,67 @@ fn fit(simp: &[V], closed: bool, corner_deg: f64, corner_run: f64) -> Curve {
                     (t, t, true)
                 }
                 (false, true) => {
-                    let b = unit(q[i], q[next(i)]);
+                    let b = geom::direction(points[i], points[next(i)]);
                     (b, b, false)
                 }
                 (true, false) => {
-                    let a = unit(q[prev(i)], q[i]);
+                    let a = geom::direction(points[prev(i)], points[i]);
                     (a, a, false)
                 }
                 (false, false) => ((0.0, 0.0), (0.0, 0.0), false),
             }
         })
-        .collect();
+        .collect()
+}
 
-    let nseg = if closed { cnt } else { cnt - 1 };
-    let segs = (0..nseg)
+/// Build one cubic-Bézier segment per edge of `points`, from each endpoint's
+/// tangent. Control points sit a third of the way along each segment so the
+/// curve cannot overshoot; an edge whose tangents run along its own chord
+/// collapses to a straight line instead of an unnecessary curve.
+fn build_segments(points: &[CurvePoint], closed: bool, tangents: &[VertexTangent]) -> Vec<Seg> {
+    let count = points.len();
+    let next = |i: usize| (i + 1) % count;
+    let segment_count = if closed { count } else { count - 1 };
+
+    (0..segment_count)
         .map(|i| {
             let j = next(i);
-            let (a, b) = (q[i], q[j]);
-            if !tang[i].2 && !tang[j].2 {
+            let (a, b) = (points[i], points[j]);
+            if !tangents[i].2 && !tangents[j].2 {
                 return Seg { c1: b, c2: b, to: b, line: true };
             }
-            let (to, ti) = (tang[i].1, tang[j].0);
+            let (tangent_out, tangent_in) = (tangents[i].1, tangents[j].0);
             // Tangents along the chord: a curve that is really a straight line.
-            let chord = unit(a, b);
-            let along = |t: P| (t.0 * chord.1 - t.1 * chord.0).abs() < 1e-9 && t.0 * chord.0 + t.1 * chord.1 > 0.0;
-            if along(to) && along(ti) {
+            let chord = geom::direction(a, b);
+            let along = |t: CurvePoint| geom::cross2(t, chord).abs() < 1e-9 && geom::dot2(t, chord) > 0.0;
+            if along(tangent_out) && along(tangent_in) {
                 return Seg { c1: b, c2: b, to: b, line: true };
             }
-            let l = dist(a, b) / 3.0;
+            let l = geom::distance(a, b) / 3.0;
             Seg {
-                c1: (a.0 + to.0 * l, a.1 + to.1 * l),
-                c2: (b.0 - ti.0 * l, b.1 - ti.1 * l),
+                c1: (a.0 + tangent_out.0 * l, a.1 + tangent_out.1 * l),
+                c2: (b.0 - tangent_in.0 * l, b.1 - tangent_in.1 * l),
                 to: b,
                 line: false,
             }
         })
-        .collect();
-    Curve { start: q[0], segs: merge_lines(q[0], segs) }
+        .collect()
 }
 
-fn dist(a: P, b: P) -> f64 {
-    ((b.0 - a.0).powi(2) + (b.1 - a.1).powi(2)).sqrt()
+/// Fit cubic Béziers through the simplified points. Tangents come from the
+/// bisector of the neighbouring segments (see `vertex_tangents`).
+fn fit(simp: &[LatticePoint], closed: bool, corner_deg: f64, corner_run: f64) -> Curve {
+    let mut points: Vec<CurvePoint> = simp.iter().map(|&v| geom::to_curve_point(v)).collect();
+    if closed {
+        points.pop();
+    }
+    let tangents = vertex_tangents(&points, closed, corner_deg, corner_run);
+    let segs = build_segments(&points, closed, &tangents);
+    Curve { start: points[0], segs: merge_lines(points[0], segs) }
 }
 
 /// Join consecutive straight segments that point the same way.
-fn merge_lines(start: P, segs: Vec<Seg>) -> Vec<Seg> {
+fn merge_lines(start: CurvePoint, segs: Vec<Seg>) -> Vec<Seg> {
     let mut out: Vec<Seg> = Vec::with_capacity(segs.len());
     let mut from = start;
     let mut last_from = start;
@@ -243,9 +238,10 @@ fn merge_lines(start: P, segs: Vec<Seg>) -> Vec<Seg> {
         if let Some(last) = out.last_mut() {
             if last.line && s.line {
                 let (d1, d2) = ((last.to.0 - last_from.0, last.to.1 - last_from.1), (s.to.0 - from.0, s.to.1 - from.1));
-                let cross = d1.0 * d2.1 - d1.1 * d2.0;
-                let dot = d1.0 * d2.0 + d1.1 * d2.1;
-                if cross.abs() <= 1e-9 * (dist((0.0, 0.0), d1) * dist((0.0, 0.0), d2)) && dot > 0.0 {
+                let cross = geom::cross2(d1, d2);
+                let dot = geom::dot2(d1, d2);
+                if cross.abs() <= 1e-9 * (geom::distance((0.0, 0.0), d1) * geom::distance((0.0, 0.0), d2)) && dot > 0.0
+                {
                     last.to = s.to;
                     from = s.to;
                     continue;

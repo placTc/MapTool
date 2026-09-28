@@ -44,19 +44,43 @@ cd web && npm install && npm run wasm && npm run dev
 
 ## Browser viewer
 
-The heavy work all happens in Rust/WASM: PNG/BMP decoding, smoothing, triangulation
-and hit testing. The TypeScript side only uploads the buffers to the GPU and draws.
-Pixel colors never pass through the browser's color pipeline, so province colors
-are exact.
+The heavy work all happens in Rust/WASM: PNG/BMP decoding, smoothing, triangulation,
+hit testing, colors, outlines, and the editing model. The TypeScript side only uploads
+buffers to the GPU, draws, and wires up the UI. Pixel colors never pass through the
+browser's color pipeline, so province colors are exact.
 
 - Needs a browser with **WebGL2** (any current Firefox, Chrome or Safari).
 - `npm run wasm` builds the WASM package into `crates/maptool-wasm/pkg` (git-ignored).
   **Run it again after any change to the Rust crates**, then restart `npm run dev`.
 - It needs `wasm-pack` on your `PATH`: `cargo install wasm-pack`, and make sure
   `~/.cargo/bin` is on `PATH`.
-- Province colors live in a palette texture, so recoloring provinces (for example
-  by game data) means updating that texture. `MapRenderer.setPalette()` does it
-  without touching any geometry.
+
+**Start screen.** Open a PNG/BMP (or a saved `.maptool` file), or pick a recent map.
+The smoothing and validation settings live here and apply to newly built maps.
+
+**Editing.** Click a province to select it; ctrl/cmd/shift-click adds or removes
+provinces; drag pans, the wheel zooms, Esc clears the selection.
+
+- *States* are named, colored groups of provinces. Create one from the selection, add
+  the selection to an existing state, rename or recolor it, or delete it. A province is in
+  at most one state: putting it in another moves it.
+- *Province details*: name (blank shows the province number), description, land or sea,
+  biome, and population. Type and biome can be set on many provinces at once.
+- *Views*: **Provinces** shows every province and can color by source colors, state,
+  land/sea, or biome. **States** shows states instead of provinces: borders inside a
+  state disappear, hovering or clicking anywhere on a state picks the whole state, and
+  provinces in no state stay separate (dimmed).
+
+**Saving.** Opened maps are kept in this browser's IndexedDB (localStorage is limited to
+a few MB of text and cannot hold them), as the finished geometry, so reopening a recent
+map takes about a tenth of a second instead of rebuilding it. Your states and province
+details are autosaved separately, a few KB per edit. At most 10 maps are kept. **Download
+map** writes a `.maptool` file with the geometry and all your edits; open it again from the
+start screen (or drop it on the page) to continue on another machine. Opening the same
+image again finds its saved copy, edits included.
+
+The file format is documented in `crates/maptool-core/src/document.rs` and `mesh.rs`.
+Loading validates everything and rejects damaged or incompatible files with a message.
 
 ## Input rules
 

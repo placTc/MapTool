@@ -6,11 +6,14 @@
 
 mod build;
 mod label;
+mod mesh;
 mod smooth;
 mod trace;
 mod validate;
 
 use std::fmt::{self, Write};
+
+pub use mesh::{MapMesh, ProvinceInfo};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -68,6 +71,8 @@ pub enum Error {
     TooLarge,
     /// The image breaks an input rule; see [`Violation`].
     Invalid { violations: Vec<Violation>, total: usize },
+    /// The triangulation of a province failed (degenerate geometry).
+    Tessellation { province: u32, message: String },
     #[cfg(feature = "io")]
     Image(String),
 }
@@ -115,6 +120,9 @@ impl fmt::Display for Error {
                     write!(f, "; and {} more", total - 5)?;
                 }
                 Ok(())
+            }
+            Error::Tessellation { province, message } => {
+                write!(f, "cannot triangulate province {province}: {message}")
             }
             #[cfg(feature = "io")]
             Error::Image(e) => write!(f, "cannot read image: {e}"),
@@ -168,14 +176,14 @@ impl VectorMap {
     }
 }
 
-/// Vectorize a `width` x `height` image given as tightly packed pixels.
-pub fn vectorize(
+/// Check the input and build the label map.
+fn prepare(
     pixels: &[u8],
     width: u32,
     height: u32,
     format: PixelFormat,
     opts: &Options,
-) -> Result<VectorMap, Error> {
+) -> Result<label::Labels, Error> {
     if width == 0 || height == 0 {
         return Err(Error::EmptyImage);
     }
@@ -200,6 +208,18 @@ pub fn vectorize(
     if opts.validate {
         validate::check(&labels)?;
     }
+    Ok(labels)
+}
+
+/// Vectorize a `width` x `height` image given as tightly packed pixels.
+pub fn vectorize(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    opts: &Options,
+) -> Result<VectorMap, Error> {
+    let labels = prepare(pixels, width, height, format, opts)?;
     let paths = build::build_paths(&labels, opts);
 
     let provinces = paths
@@ -214,6 +234,39 @@ pub fn vectorize(
         })
         .collect();
     Ok(VectorMap { width, height, provinces })
+}
+
+/// Like [`vectorize`], but produce triangle meshes for GPU rendering instead of
+/// SVG paths. `flatten_tolerance` is how far, in pixels, the flattened curves may
+/// stray from the true smoothed border (0.05 is fine up to about 30x zoom).
+pub fn mesh(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    opts: &Options,
+    flatten_tolerance: f64,
+) -> Result<MapMesh, Error> {
+    let labels = prepare(pixels, width, height, format, opts)?;
+    let rings = build::geometry(&labels, opts).rings(flatten_tolerance);
+    let provinces = (0..labels.colors.len())
+        .map(|i| ProvinceInfo {
+            id: i as u32,
+            color: labels.colors[i],
+            pixel_count: labels.counts[i],
+            bbox: labels.bboxes[i],
+        })
+        .collect();
+    mesh::build(width, height, provinces, rings)
+}
+
+/// Decode PNG or BMP bytes to tightly packed RGBA. No color management is applied,
+/// so pixel values (and therefore province colors) are exactly what the file holds.
+#[cfg(feature = "io")]
+pub fn decode_image(bytes: &[u8]) -> Result<(Vec<u8>, u32, u32), Error> {
+    let img = image::load_from_memory(bytes).map_err(|e| Error::Image(e.to_string()))?.to_rgba8();
+    let (w, h) = img.dimensions();
+    Ok((img.into_raw(), w, h))
 }
 
 /// Decode a PNG or BMP file and vectorize it.

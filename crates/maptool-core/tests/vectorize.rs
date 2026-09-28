@@ -409,3 +409,149 @@ fn svg_document() {
     assert!(svg.starts_with("<svg"));
     assert!(svg.contains("data-id=\"0\"") && svg.contains("fill=\"#ff0000\""));
 }
+
+// ---------------------------------------------------------------- meshes
+
+use maptool_core::{MapMesh, mesh};
+
+fn mesh_of(colors: &[u32], w: u32, h: u32, o: &Options) -> MapMesh {
+    let lax = Options { validate: false, ..o.clone() };
+    mesh(&rgb(colors, w, h), w, h, PixelFormat::Rgb, &lax, 0.05).unwrap()
+}
+
+/// Sum of triangle areas per province.
+fn triangle_areas(m: &MapMesh) -> Vec<f64> {
+    let mut areas = vec![0.0; m.provinces.len()];
+    for t in m.indices.chunks(3) {
+        let p = |i: u32| (m.positions[i as usize * 2] as f64, m.positions[i as usize * 2 + 1] as f64);
+        let (a, b, c) = (p(t[0]), p(t[1]), p(t[2]));
+        let area = ((b.0 - a.0) * (c.1 - a.1) - (c.0 - a.0) * (b.1 - a.1)).abs() / 2.0;
+        areas[m.vertex_province[t[0] as usize] as usize] += area;
+    }
+    areas
+}
+
+fn assert_mesh_is_exact(m: &MapMesh) {
+    for (info, area) in m.provinces.iter().zip(triangle_areas(m)) {
+        assert!((area - info.pixel_count as f64).abs() < 1e-3, "province {}: triangles cover {area}, pixels {}", info.id, info.pixel_count);
+    }
+}
+
+#[test]
+fn mesh_of_simple_shapes_is_exact() {
+    assert_mesh_is_exact(&mesh_of(&[RED, RED, BLUE, BLUE, RED, RED, BLUE, BLUE], 4, 2, &Options::exact()));
+
+    let mut hole = vec![RED; 81];
+    for y in 3..6 {
+        for x in 3..6 {
+            hole[y * 9 + x] = BLUE;
+        }
+    }
+    assert_mesh_is_exact(&mesh_of(&hole, 9, 9, &Options::exact()));
+
+    let mut exclaves = vec![BLUE; 100];
+    for &(x0, y0) in &[(1, 1), (6, 6)] {
+        for y in y0..y0 + 3 {
+            for x in x0..x0 + 3 {
+                exclaves[y * 10 + x] = RED;
+            }
+        }
+    }
+    assert_mesh_is_exact(&mesh_of(&exclaves, 10, 10, &Options::exact()));
+}
+
+#[test]
+fn mesh_survives_pinch_points_and_noise() {
+    assert_mesh_is_exact(&mesh_of(&[RED, BLUE, BLUE, RED], 2, 2, &Options::exact()));
+    assert_mesh_is_exact(&mesh_of(&[RED, BLUE, GREEN, 0xffffff], 2, 2, &Options::exact()));
+    for seed in 1..40u64 {
+        let mut s = seed;
+        let (w, h) = (3 + (seed % 17) as u32, 3 + (seed % 11) as u32);
+        let n = 2 + (seed % 4) as u64;
+        let px: Vec<u32> = (0..w * h).map(|_| 0x101010 * (lcg(&mut s) % n) as u32 + 0x0a0a0a).collect();
+        assert_mesh_is_exact(&mesh_of(&px, w, h, &Options::exact()));
+    }
+}
+
+#[test]
+fn mesh_of_organic_map_is_exact() {
+    for jitter in [13, 97] {
+        let px = blobby(160, 120, 25, 7, jitter);
+        assert_mesh_is_exact(&mesh_of(&px, 160, 120, &Options::exact()));
+    }
+}
+
+#[test]
+fn smoothed_mesh_tiles_the_image_without_gaps_or_overlaps() {
+    // The provinces cover the whole image, so their areas add up to exactly
+    // width x height if and only if shared borders match with no cracks.
+    let total = |jitter: u64| {
+        let px = blobby(160, 120, 25, 7, jitter);
+        triangle_areas(&mesh_of(&px, 160, 120, &Options::default())).iter().sum::<f64>()
+    };
+    let image = 160.0 * 120.0;
+    assert!((total(13) - image).abs() < 0.5, "organic borders: total area {}", total(13));
+    // With every border pixel randomized, two smoothed borders can cross in a
+    // one-pixel neck and overlap by a sliver (about 1 px^2 here). This is not a
+    // mesh crack: it does not shrink with finer flattening, and it vanishes with
+    // lighter smoothing (tolerance 0.5) or none.
+    assert!((total(97) - image).abs() < 2.0, "extreme noise: total area {}", total(97));
+}
+
+#[test]
+fn pick_agrees_with_every_pixel_in_exact_mode() {
+    let (w, h) = (160u32, 120u32);
+    let px = blobby(w, h, 25, 7, 97);
+    let m = mesh_of(&px, w, h, &Options::exact());
+    for y in 0..h {
+        for x in 0..w {
+            let want = m.provinces.iter().find(|p| p.color == [(px[(y * w + x) as usize] >> 16) as u8, (px[(y * w + x) as usize] >> 8) as u8, px[(y * w + x) as usize] as u8]).unwrap().id;
+            assert_eq!(m.pick(x as f64 + 0.5, y as f64 + 0.5), Some(want), "pixel ({x}, {y})");
+        }
+    }
+    assert_eq!(m.pick(-5.0, 10.0), None);
+    assert_eq!(m.pick(10.0, h as f64 + 5.0), None);
+}
+
+#[test]
+fn pick_on_a_smoothed_map_only_disagrees_next_to_borders() {
+    let (w, h) = (160u32, 120u32);
+    let px = blobby(w, h, 25, 7, 13);
+    let m = mesh_of(&px, w, h, &Options::default());
+    let (mut wrong, mut far_wrong) = (0, 0);
+    for y in 2..h - 2 {
+        for x in 2..w - 2 {
+            let at = |dx: i32, dy: i32| px[((y as i32 + dy) as u32 * w + (x as i32 + dx) as u32) as usize];
+            let got = m.pick(x as f64 + 0.5, y as f64 + 0.5).map(|id| m.provinces[id as usize].color);
+            let want = at(0, 0);
+            if got != Some([(want >> 16) as u8, (want >> 8) as u8, want as u8]) {
+                wrong += 1;
+                // A smoothed border may move by about a pixel, never more: the
+                // pixel must have a differently-colored neighbour within 2 px.
+                let near = (-2..=2).any(|dy| (-2..=2).any(|dx| at(dx, dy) != want));
+                if !near {
+                    far_wrong += 1;
+                }
+            }
+        }
+    }
+    assert_eq!(far_wrong, 0, "picked the wrong province away from any border");
+    assert!(wrong < 19200 / 10, "too many borderline mismatches: {wrong}");
+}
+
+#[test]
+fn mesh_rejects_invalid_input_like_vectorize() {
+    let bad = rgb(&[RED, BLUE, BLUE, RED], 2, 2);
+    assert!(matches!(mesh(&bad, 2, 2, PixelFormat::Rgb, &Options::default(), 0.05), Err(Error::Invalid { .. })));
+}
+
+#[test]
+fn mesh_border_lines_reference_valid_points() {
+    let m = mesh_of(&blobby(80, 60, 12, 3, 13), 80, 60, &Options::default());
+    let n = (m.line_positions.len() / 2) as u32;
+    assert!(m.line_indices.iter().all(|&i| i < n));
+    assert!(m.indices.iter().all(|&i| (i as usize) < m.vertex_province.len()));
+    let total: u32 = m.line_ranges.iter().map(|r| r[1]).sum();
+    assert_eq!(total as usize, m.line_indices.len());
+    assert_eq!(m.positions.len(), m.vertex_province.len() * 2);
+}

@@ -2,7 +2,7 @@
 //! `cargo run --release -p maptool-core --example bench -- [width height cell]`
 use std::time::Instant;
 
-use maptool_core::{Options, PixelFormat, vectorize};
+use maptool_core::{Options, PixelFormat, mesh, vectorize};
 
 fn hash(a: u64, b: u64) -> u64 {
     let mut x = a.wrapping_mul(0x9E3779B97F4A7C15) ^ b.wrapping_mul(0xC2B2AE3D27D4EB4F);
@@ -51,6 +51,20 @@ fn main() {
         let took = t.elapsed();
         let bytes: usize = m.provinces.iter().map(|p| p.path.len()).sum();
         eprintln!("{name}: {} provinces, {:.1} MB of path data, {took:.2?}", m.provinces.len(), bytes as f64 / 1e6);
+    }
+
+    for tol in [0.05, 0.2] {
+        let t = Instant::now();
+        let m = mesh(&px, w, h, PixelFormat::Rgb, &lax(Options::default()), tol).unwrap();
+        eprintln!(
+            "mesh (flatten {tol}): {} provinces, {} vertices, {} triangles, {} border segments, {:.1} MB, {:.2?}",
+            m.provinces.len(),
+            m.vertex_province.len(),
+            m.indices.len() / 3,
+            m.line_indices.len() / 2,
+            (m.positions.len() * 4 + m.vertex_province.len() * 4 + m.indices.len() * 4 + m.line_positions.len() * 4 + m.line_indices.len() * 4) as f64 / 1e6,
+            t.elapsed()
+        );
     }
 
     // Label map + validation scan only; this map is expected to be rejected.

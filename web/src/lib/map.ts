@@ -1,40 +1,29 @@
-import init, { vectorize, type VectorMap } from 'maptool-wasm';
+import init, { Settings, meshFromImage, type MapMesh } from 'maptool-wasm';
 
-export interface Province {
-  id: number;
-  color: string;
-  pixelCount: number;
-  bbox: [number, number, number, number];
-  path: string;
-}
+export type { MapMesh };
 
-export interface LoadedMap {
-  width: number;
-  height: number;
-  provinces: Province[];
-}
+/** How long the last `loadMesh` spent inside WASM (decoding, smoothing, triangulating). */
+export const loadTimings = { wasmMs: 0 };
 
 let ready: Promise<unknown> | undefined;
 
-/** Vectorize RGBA pixels into plain objects the UI can render reactively. */
-export async function vectorizeRgba(data: Uint8Array, width: number, height: number, tolerance: number, validate: boolean): Promise<LoadedMap> {
+/**
+ * Decode a PNG/BMP file and build the map mesh, all inside WASM. The browser never
+ * touches the pixels, so province colors cannot be altered by its color pipeline.
+ */
+export async function loadMesh(file: Blob, opts: { tolerance: number; validate: boolean }): Promise<MapMesh> {
   ready ??= init();
   await ready;
-  const map: VectorMap = vectorize(data, width, height, tolerance, undefined, undefined, undefined, undefined, validate);
+  const bytes = new Uint8Array(await file.arrayBuffer());
+  const settings = new Settings();
+  settings.tolerance = opts.tolerance;
+  settings.validate = opts.validate;
   try {
-    const provinces: Province[] = [];
-    for (let id = 0; id < map.len; id++) {
-      const [x0, y0, x1, y1] = map.bbox(id);
-      provinces.push({
-        id,
-        color: '#' + map.color(id).toString(16).padStart(6, '0'),
-        pixelCount: map.pixelCount(id),
-        bbox: [x0, y0, x1, y1],
-        path: map.path(id),
-      });
-    }
-    return { width: map.width, height: map.height, provinces };
+    const t = performance.now();
+    const mesh = meshFromImage(bytes, settings);
+    loadTimings.wasmMs = performance.now() - t;
+    return mesh;
   } finally {
-    map.free();
+    settings.free();
   }
 }

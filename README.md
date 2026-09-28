@@ -1,7 +1,8 @@
 # MapTool
 
-Turn PNG/BMP images made of solid-colored areas ("provinces") into smoothed SVG
-paths for interactive, per-province map display in the browser. Built for large
+Turn PNG/BMP images made of solid-colored areas ("provinces") into smoothed vector
+geometry for interactive, per-province map display in the browser: SVG paths for
+export, and GPU triangle meshes for a fast WebGL viewer. Built for large
 Clausewitz-engine-style province maps.
 
 - A province is identified by its **exact RGB color**. Disconnected regions of
@@ -11,7 +12,10 @@ Clausewitz-engine-style province maps.
   overlaps between provinces. Image edges stay straight.
 - Fully transparent pixels (RGBA) belong to no province.
 
-Speed: a 5632×2048 map with ~2800 provinces vectorizes in about 0.3 s (single thread).
+Speed (5632×2048, ~2800 provinces, single thread): SVG paths in about 0.3 s, a full
+triangle mesh in about 0.3 s. In the browser the whole load (PNG decode, smoothing,
+triangulation, GPU upload) takes about 0.7 s, and pan/zoom stays at the display's
+refresh rate with about 0.1 ms of CPU per frame.
 
 ## Layout
 
@@ -19,9 +23,9 @@ Speed: a 5632×2048 map with ~2800 provinces vectorizes in about 0.3 s (single t
 | --- | --- |
 | `crates/maptool-core` | The algorithm. No I/O by default; `io` feature adds PNG/BMP decoding |
 | `crates/maptool-cli` | `maptool` command line tool |
-| `crates/maptool-wasm` | wasm-bindgen wrapper for the browser |
+| `crates/maptool-wasm` | wasm-bindgen wrapper: SVG paths, or a mesh with zero-copy buffers and hit testing |
 | `crates/maptool-py` + `src/maptool` | Python package (pyo3, built with maturin) |
-| `web/` | Svelte viewer with hover/click/pan/zoom |
+| `web/` | Svelte + WebGL2 viewer with hover, click, pan and zoom |
 
 ## Usage
 
@@ -37,6 +41,22 @@ python -c "import maptool; m = maptool.vectorize_file('map.png'); print(m, m[0].
 # Browser viewer
 cd web && npm install && npm run wasm && npm run dev
 ```
+
+## Browser viewer
+
+The heavy work all happens in Rust/WASM: PNG/BMP decoding, smoothing, triangulation
+and hit testing. The TypeScript side only uploads the buffers to the GPU and draws.
+Pixel colors never pass through the browser's color pipeline, so province colors
+are exact.
+
+- Needs a browser with **WebGL2** (any current Firefox, Chrome or Safari).
+- `npm run wasm` builds the WASM package into `crates/maptool-wasm/pkg` (git-ignored).
+  **Run it again after any change to the Rust crates**, then restart `npm run dev`.
+- It needs `wasm-pack` on your `PATH`: `cargo install wasm-pack`, and make sure
+  `~/.cargo/bin` is on `PATH`.
+- Province colors live in a palette texture, so recoloring provinces (for example
+  by game data) means updating that texture. `MapRenderer.setPalette()` does it
+  without touching any geometry.
 
 ## Input rules
 

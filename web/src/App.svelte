@@ -1,8 +1,9 @@
 <script lang="ts">
-  import { decodeImage } from './lib/decode';
-  import { vectorizeRgba, type LoadedMap, type Province } from './lib/map';
+  import { onMount } from 'svelte';
+  import { MapRenderer, type Camera } from './lib/gl';
+  import { loadMesh, loadTimings, type MapMesh } from './lib/map';
 
-  let map = $state.raw<LoadedMap | null>(null);
+  let mesh = $state.raw<MapMesh | null>(null);
   let status = $state('Drop a PNG/BMP province map here, or pick one.');
   let busy = $state(false);
   let tolerance = $state(1);
@@ -11,26 +12,90 @@
 
   let hoveredId = $state<number | null>(null);
   let selectedId = $state<number | null>(null);
-  const hovered = $derived(map && hoveredId !== null ? map.provinces[hoveredId] : null);
-  const selected = $derived(map && selectedId !== null ? map.provinces[selectedId] : null);
 
-  // The visible part of the map, in image pixels.
-  let view = $state({ x: 0, y: 0, w: 1, h: 1 });
-  let svgEl = $state<SVGSVGElement>();
+  interface Info {
+    id: number;
+    color: string;
+    pixelCount: number;
+    bbox: number[];
+  }
+  function infoOf(m: MapMesh, id: number): Info {
+    return { id, color: '#' + m.color(id).toString(16).padStart(6, '0'), pixelCount: m.pixelCount(id), bbox: m.bbox(id) as unknown as number[] };
+  }
+  const hovered = $derived(mesh && hoveredId !== null ? infoOf(mesh, hoveredId) : null);
+  const selected = $derived(mesh && selectedId !== null ? infoOf(mesh, selectedId) : null);
+
+  // --- Drawing ---
+  // The map lives on the GPU; the camera is three numbers. Nothing here touches
+  // the province geometry, so pan and zoom cost one draw per frame.
+  const MAX_K = 30;
+  let canvasEl = $state<HTMLCanvasElement>();
+  let cw = $state(0);
+  let ch = $state(0);
+  let renderer: MapRenderer | undefined;
+  let cam: Camera = { x: 0, y: 0, k: 1 };
+  let fitK = 1;
+  let drawQueued = false;
+
+  function requestDraw() {
+    if (drawQueued) return;
+    drawQueued = true;
+    requestAnimationFrame(() => {
+      drawQueued = false;
+      renderer?.draw(cam, hoveredId, selectedId);
+    });
+  }
+
+  onMount(() => {
+    try {
+      renderer = new MapRenderer(canvasEl!);
+    } catch (e) {
+      status = `Error: ${e instanceof Error ? e.message : e}`;
+    }
+    return () => renderer?.dispose();
+  });
+
+  $effect(() => {
+    const w = cw;
+    const h = ch;
+    if (!renderer || w === 0 || h === 0) return;
+    renderer.resize(w, h, window.devicePixelRatio || 1);
+    requestDraw();
+  });
+
+  $effect(() => {
+    hoveredId;
+    selectedId;
+    requestDraw();
+  });
+
+  function fitCam(m: MapMesh): Camera {
+    const k = Math.min(cw / m.width, ch / m.height);
+    fitK = k;
+    return { x: (m.width - cw / k) / 2, y: (m.height - ch / k) / 2, k };
+  }
 
   async function load(file: Blob) {
+    if (!renderer) return;
     lastFile = file;
     busy = true;
     hoveredId = selectedId = null;
-    status = 'Decoding…';
+    status = 'Loading…';
+    await new Promise((r) => setTimeout(r)); // let the status paint first
     try {
-      const { data, width, height } = await decodeImage(file);
-      status = `Vectorizing ${width}×${height}…`;
-      await new Promise((r) => setTimeout(r)); // let the status paint first
       const t = performance.now();
-      map = await vectorizeRgba(data, width, height, tolerance, validate);
-      view = { x: 0, y: 0, w: map.width, h: map.height };
-      status = `${map.provinces.length} provinces (${Math.round(performance.now() - t)} ms)`;
+      const loaded = await loadMesh(file, { tolerance, validate });
+      const old = mesh;
+      mesh = loaded;
+      const upload = performance.now();
+      renderer.setMesh(loaded);
+      const uploadMs = performance.now() - upload;
+      old?.free();
+      cam = fitCam(loaded);
+      requestDraw();
+      status =
+        `${loaded.width}×${loaded.height}, ${loaded.len} provinces ` +
+        `(${Math.round(performance.now() - t)} ms: ${Math.round(loadTimings.wasmMs)} in WASM, ${Math.round(uploadMs)} GPU upload)`;
     } catch (e) {
       status = `Error: ${e instanceof Error ? e.message : e}`;
     } finally {
@@ -53,76 +118,84 @@
     if (f) load(f);
   }
 
-  // --- Hit testing: one delegated listener; each path carries its province id. ---
-  function provinceAt(e: Event): number | null {
-    const id = (e.target as SVGElement).dataset?.id;
-    return id === undefined ? null : Number(id);
+  // --- Hit testing: the province under a screen point, computed in WASM on the drawn geometry. ---
+  function pickAt(clientX: number, clientY: number): number | null {
+    if (!mesh) return null;
+    const r = canvasEl!.getBoundingClientRect();
+    const id = mesh.pick(cam.x + (clientX - r.left) / cam.k, cam.y + (clientY - r.top) / cam.k);
+    return id < 0 ? null : id;
+  }
+
+  // --- Pointer: hover, click to select, drag to pan ---
+  let drag: { x: number; y: number; cam: Camera; moved: boolean } | null = null;
+
+  function onPointerDown(e: PointerEvent) {
+    try {
+      canvasEl!.setPointerCapture(e.pointerId);
+    } catch {
+      // The pointer is already gone; dragging still works without capture.
+    }
+    drag = { x: e.clientX, y: e.clientY, cam, moved: false };
   }
 
   function onPointerMove(e: PointerEvent) {
-    if (drag) {
-      pan(e);
-    } else {
-      hoveredId = provinceAt(e);
+    if (!drag) {
+      hoveredId = pickAt(e.clientX, e.clientY);
+      return;
     }
-  }
-
-  // --- Pan and zoom ---
-  let drag: { x: number; y: number; view: typeof view; moved: boolean } | null = null;
-
-  function onPointerDown(e: PointerEvent) {
-    svgEl!.setPointerCapture(e.pointerId);
-    drag = { x: e.clientX, y: e.clientY, view: { ...view }, moved: false };
-  }
-
-  function pan(e: PointerEvent) {
-    const d = drag!;
-    const dx = e.clientX - d.x;
-    const dy = e.clientY - d.y;
-    if (!d.moved && Math.hypot(dx, dy) < 4) return;
-    d.moved = true;
-    const scale = d.view.w / svgEl!.clientWidth;
-    view = { ...d.view, x: d.view.x - dx * scale, y: d.view.y - dy * scale };
+    const dx = e.clientX - drag.x;
+    const dy = e.clientY - drag.y;
+    if (!drag.moved && Math.hypot(dx, dy) < 4) return;
+    drag.moved = true;
+    cam = { x: drag.cam.x - dx / drag.cam.k, y: drag.cam.y - dy / drag.cam.k, k: drag.cam.k };
+    requestDraw();
   }
 
   function onPointerUp(e: PointerEvent) {
     const wasClick = drag && !drag.moved;
     drag = null;
-    if (wasClick) {
-      // Pointer capture retargets events to the svg, so look the element up again.
-      const el = document.elementFromPoint(e.clientX, e.clientY) as SVGElement | null;
-      const id = el?.dataset?.id;
-      selectedId = id === undefined ? null : Number(id);
-    }
+    if (wasClick) selectedId = pickAt(e.clientX, e.clientY);
+  }
+
+  /** Wheel delta in pixels. Browsers report lines (Firefox mouse wheels) or pages too. */
+  function wheelPixels(e: WheelEvent): number {
+    if (e.deltaMode === WheelEvent.DOM_DELTA_LINE) return e.deltaY * 40;
+    if (e.deltaMode === WheelEvent.DOM_DELTA_PAGE) return e.deltaY * ch;
+    return e.deltaY;
   }
 
   function onWheel(e: WheelEvent) {
-    if (!map) return;
+    if (!mesh) return;
     e.preventDefault();
-    const rect = svgEl!.getBoundingClientRect();
-    const factor = Math.exp(e.deltaY * 0.0015);
-    const w = Math.min(Math.max(view.w * factor, 8), map.width * 4);
-    const k = w / view.w;
-    const px = view.x + ((e.clientX - rect.left) / rect.width) * view.w;
-    const py = view.y + ((e.clientY - rect.top) / rect.height) * view.h;
-    view = { x: px - (px - view.x) * k, y: py - (py - view.y) * k, w, h: view.h * k };
+    const r = canvasEl!.getBoundingClientRect();
+    const sx = e.clientX - r.left;
+    const sy = e.clientY - r.top;
+    const k = Math.min(Math.max(cam.k * Math.exp(-wheelPixels(e) * 0.0015), fitK * 0.5), MAX_K);
+    // Keep the image point under the cursor where it is.
+    const px = cam.x + sx / cam.k;
+    const py = cam.y + sy / cam.k;
+    cam = { x: px - sx / k, y: py - sy / k, k };
+    requestDraw();
+  }
+
+  // Wheel listeners must be non-passive to be allowed to stop the page from scrolling.
+  function wheelAction(node: HTMLElement) {
+    node.addEventListener('wheel', onWheel, { passive: false });
+    return { destroy: () => node.removeEventListener('wheel', onWheel) };
   }
 
   function fit() {
-    if (map) view = { x: 0, y: 0, w: map.width, h: map.height };
+    if (!mesh) return;
+    cam = fitCam(mesh);
+    requestDraw();
   }
 
-  function zoomTo(p: Province) {
+  function zoomTo(p: Info) {
     const [x0, y0, x1, y1] = p.bbox;
     const pad = Math.max(x1 - x0, y1 - y0) * 0.25 + 4;
-    const aspect = view.h / view.w;
-    let w = x1 - x0 + pad * 2;
-    let h = w * aspect;
-    if (h < y1 - y0 + pad * 2) {
-      h = y1 - y0 + pad * 2;
-      w = h / aspect;
-    }
-    view = { x: (x0 + x1) / 2 - w / 2, y: (y0 + y1) / 2 - h / 2, w, h };
+    const k = Math.min(cw / (x1 - x0 + pad * 2), ch / (y1 - y0 + pad * 2), MAX_K);
+    cam = { x: (x0 + x1) / 2 - cw / k / 2, y: (y0 + y1) / 2 - ch / k / 2, k };
+    requestDraw();
   }
 </script>
 
@@ -144,36 +217,21 @@
       <input type="checkbox" bind:checked={validate} /> Validate input
     </label>
     <button onclick={() => lastFile && load(lastFile)} disabled={busy || !lastFile}>Re-run</button>
-    <button onclick={fit} disabled={!map}>Fit</button>
+    <button onclick={fit} disabled={!mesh}>Fit</button>
     <span class="status">{status}</span>
   </header>
 
-  <section class="stage">
-    {#if map}
-      <!-- svelte-ignore a11y_no_static_element_interactions -->
-      <svg
-        bind:this={svgEl}
-        viewBox="{view.x} {view.y} {view.w} {view.h}"
-        onpointermove={onPointerMove}
-        onpointerleave={() => (hoveredId = null)}
-        onpointerdown={onPointerDown}
-        onpointerup={onPointerUp}
-        onwheel={onWheel}
-      >
-        <g class="provinces">
-          {#each map.provinces as p (p.id)}
-            <path d={p.path} fill={p.color} fill-rule="evenodd" data-id={p.id} />
-          {/each}
-        </g>
-        <!-- Overlays never take pointer events, so they can't steal hovers. -->
-        {#if hovered}
-          <path class="hover" d={hovered.path} fill-rule="evenodd" />
-        {/if}
-        {#if selected}
-          <path class="selected" d={selected.path} fill-rule="evenodd" />
-        {/if}
-      </svg>
-    {:else}
+  <section class="stage" bind:clientWidth={cw} bind:clientHeight={ch}>
+    <canvas
+      bind:this={canvasEl}
+      use:wheelAction
+      onpointerdown={onPointerDown}
+      onpointermove={onPointerMove}
+      onpointerup={onPointerUp}
+      onpointerleave={() => (hoveredId = null)}
+    ></canvas>
+
+    {#if !mesh}
       <p class="empty">{status}</p>
     {/if}
 
@@ -190,7 +248,7 @@
         {#if selected}
           <button onclick={() => zoomTo(selected)}>Zoom to selected</button>
         {/if}
-      {:else if map}
+      {:else if mesh}
         <p>Hover a province, click to select. Wheel zooms, drag pans.</p>
       {/if}
     </aside>
@@ -247,8 +305,11 @@
     position: relative;
     flex: 1;
     min-height: 0;
+    overflow: hidden;
   }
-  svg {
+  canvas {
+    position: absolute;
+    inset: 0;
     width: 100%;
     height: 100%;
     display: block;
@@ -256,28 +317,14 @@
     touch-action: none;
     user-select: none;
   }
-  .provinces path {
-    stroke: rgba(0, 0, 0, 0.35);
-    stroke-width: 0.5;
-    vector-effect: non-scaling-stroke;
-  }
-  .hover {
-    fill: rgba(255, 255, 255, 0.35);
-    pointer-events: none;
-  }
-  .selected {
-    fill: none;
-    stroke: #ffd400;
-    stroke-width: 2.5;
-    vector-effect: non-scaling-stroke;
-    pointer-events: none;
-  }
   .empty {
+    position: absolute;
+    inset: 0;
     display: grid;
     place-items: center;
-    height: 100%;
     color: #9aa3ad;
     margin: 0;
+    pointer-events: none;
   }
   aside {
     position: absolute;

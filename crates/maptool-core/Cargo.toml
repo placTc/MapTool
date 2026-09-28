@@ -11,4 +11,5 @@ default = []
 io = ["dep:image"]
 
 [dependencies]
+lyon_tessellation = "1"
 image = { version = "0.25", default-features = false, features = ["png", "bmp"], optional = true }

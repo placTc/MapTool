@@ -86,6 +86,18 @@ fn main() {
     let t = Instant::now();
     let n = doc.state_border_indices().len();
     eprintln!("state-view borders: {} segments in {:.2?}", n / 2, t.elapsed());
+    // Box selection and the other per-view queries, as the editor runs them while you drag.
+    let (mw, mh) = (w as f64, h as f64);
+    let t = Instant::now();
+    let mut found = 0;
+    for i in 0..100 {
+        let o = i as f64 * 20.0;
+        found += doc.provinces_in_rect(o, o / 4.0, o + mw / 4.0, o / 4.0 + mh / 4.0, false, 0).len();
+    }
+    eprintln!("box selection (a quarter of the map): {:.2?} each, {} provinces on average", t.elapsed() / 100, found / 100);
+    let t = Instant::now();
+    let n = doc.border_indices(maptool_core::Level::Countries).len();
+    eprintln!("country-view borders: {} segments in {:.2?}", n / 2, t.elapsed());
     let t = Instant::now();
     let _ = doc.palette(maptool_core::ViewMode::States, &[1, 2, 3], &[4]);
     eprintln!("palette: {:.2?}", t.elapsed());

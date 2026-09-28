@@ -74,33 +74,73 @@ impl MapMesh {
     /// Uses the same rings that are drawn, so it agrees with the picture. A point
     /// exactly on a shared border may belong to either neighbour.
     pub fn pick(&self, x: f64, y: f64) -> Option<u32> {
-        for (id, info) in self.provinces.iter().enumerate() {
-            let [x0, y0, x1, y1] = info.bbox;
-            // Smoothed borders can bulge slightly beyond the pixel bounds.
-            if x < x0 as f64 - 1.0 || x > x1 as f64 + 1.0 || y < y0 as f64 - 1.0 || y > y1 as f64 + 1.0 {
-                continue;
-            }
-            let [first, count] = self.province_rings[id];
-            let mut inside = false;
-            for ring in first..first + count {
-                let (a, b) = (self.ring_starts[ring as usize] as usize, self.ring_starts[ring as usize + 1] as usize);
-                let pts = &self.line_positions[a * 2..b * 2];
-                let n = b - a;
-                let mut j = n - 1;
-                for i in 0..n {
-                    let (xi, yi) = (pts[i * 2] as f64, pts[i * 2 + 1] as f64);
-                    let (xj, yj) = (pts[j * 2] as f64, pts[j * 2 + 1] as f64);
-                    if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
-                        inside = !inside;
-                    }
-                    j = i;
+        (0..self.provinces.len()).find(|&id| self.near(id, x, y, x, y) && self.contains(id, x, y)).map(|id| id as u32)
+    }
+
+    /// Whether the pixel bounds of province `id`, grown by a pixel (smoothed borders can
+    /// bulge slightly beyond them), overlap the rectangle.
+    fn near(&self, id: usize, x0: f64, y0: f64, x1: f64, y1: f64) -> bool {
+        let [bx0, by0, bx1, by1] = self.provinces[id].bbox;
+        !(x1 < bx0 as f64 - 1.0 || x0 > bx1 as f64 + 1.0 || y1 < by0 as f64 - 1.0 || y0 > by1 as f64 + 1.0)
+    }
+
+    /// The rings of province `id`, as slices of x, y pairs.
+    fn rings(&self, id: usize) -> impl Iterator<Item = &[f32]> {
+        let [first, count] = self.province_rings[id];
+        (first..first + count).map(move |ring| {
+            let (a, b) = (self.ring_starts[ring as usize] as usize, self.ring_starts[ring as usize + 1] as usize);
+            &self.line_positions[a * 2..b * 2]
+        })
+    }
+
+    /// Whether the point is inside province `id` (even-odd over its rings, so holes count).
+    fn contains(&self, id: usize, x: f64, y: f64) -> bool {
+        let mut inside = false;
+        for pts in self.rings(id) {
+            let n = pts.len() / 2;
+            let mut j = n - 1;
+            for i in 0..n {
+                let (xi, yi) = (pts[i * 2] as f64, pts[i * 2 + 1] as f64);
+                let (xj, yj) = (pts[j * 2] as f64, pts[j * 2 + 1] as f64);
+                if (yi > y) != (yj > y) && x < (xj - xi) * (y - yi) / (yj - yi) + xi {
+                    inside = !inside;
                 }
-            }
-            if inside {
-                return Some(id as u32);
+                j = i;
             }
         }
-        None
+        inside
+    }
+
+    /// The provinces in the rectangle `x0,y0`-`x1,y1` (image pixels, any corner order),
+    /// ascending: those whose shape touches it, or with `whole` only those whose pixel
+    /// bounds lie entirely inside it.
+    pub fn provinces_in_rect(&self, x0: f64, y0: f64, x1: f64, y1: f64, whole: bool) -> Vec<u32> {
+        let (x0, x1) = (x0.min(x1), x0.max(x1));
+        let (y0, y1) = (y0.min(y1), y0.max(y1));
+        let mut out = Vec::new();
+        for (id, info) in self.provinces.iter().enumerate() {
+            let hit = if whole {
+                let [bx0, by0, bx1, by1] = info.bbox;
+                bx0 as f64 >= x0 && bx1 as f64 <= x1 && by0 as f64 >= y0 && by1 as f64 <= y1
+            } else {
+                self.near(id, x0, y0, x1, y1)
+                    && (self.rings(id).any(|pts| {
+                        let n = pts.len() / 2;
+                        (0..n).any(|i| {
+                            let j = (i + 1) % n;
+                            segment_hits_rect(
+                                (pts[i * 2] as f64, pts[i * 2 + 1] as f64),
+                                (pts[j * 2] as f64, pts[j * 2 + 1] as f64),
+                                (x0, y0, x1, y1),
+                            )
+                        })
+                    }) || self.contains(id, (x0 + x1) / 2.0, (y0 + y1) / 2.0))
+            };
+            if hit {
+                out.push(id as u32);
+            }
+        }
+        out
     }
 }
 
@@ -194,6 +234,34 @@ pub fn build(
 const COMPRESSION_LEVEL: u8 = 1;
 /// Refuse payloads that would inflate beyond this many bytes.
 const MAX_PAYLOAD: usize = 1 << 30;
+
+/// Whether the segment `a`-`b` has any point in the rectangle `(x0, y0, x1, y1)` (borders
+/// count). Liang-Barsky clipping.
+fn segment_hits_rect(a: (f64, f64), b: (f64, f64), (x0, y0, x1, y1): (f64, f64, f64, f64)) -> bool {
+    let (dx, dy) = (b.0 - a.0, b.1 - a.1);
+    let (mut t0, mut t1) = (0.0f64, 1.0f64);
+    for (p, q) in [(-dx, a.0 - x0), (dx, x1 - a.0), (-dy, a.1 - y0), (dy, y1 - a.1)] {
+        if p == 0.0 {
+            if q < 0.0 {
+                return false;
+            }
+        } else {
+            let r = q / p;
+            if p < 0.0 {
+                if r > t1 {
+                    return false;
+                }
+                t0 = t0.max(r);
+            } else {
+                if r < t0 {
+                    return false;
+                }
+                t1 = t1.min(r);
+            }
+        }
+    }
+    true
+}
 
 pub(crate) fn bad(why: impl Into<String>) -> Error {
     Error::Format(why.into())

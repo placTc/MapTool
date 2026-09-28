@@ -6,13 +6,17 @@ use crate::Error;
 use crate::mesh::{Reader, bad};
 
 const NO_STATE: u32 = u32::MAX;
-const STATES_VERSION: u32 = 1;
+/// Version 1 had no descriptions.
+const STATES_VERSION: u32 = 2;
 const MAX_NAME_CHARS: usize = 200;
+const MAX_DESCRIPTION_CHARS: usize = 5000;
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct State {
     pub id: u32,
     pub name: String,
+    /// Free text; empty when there is none.
+    pub description: String,
     pub color: [u8; 3],
     /// Province ids in ascending order.
     pub provinces: Vec<u32>,
@@ -108,7 +112,7 @@ impl StateSet {
         self.check(provinces)?;
         let id = self.next_id;
         self.next_id += 1;
-        self.states.push(State { id, name: clean_name(name, id), color: auto_color(id), provinces: Vec::new() });
+        self.states.push(State { id, name: clean_name(name, id), description: String::new(), color: auto_color(id), provinces: Vec::new() });
         self.assign(id, provinces)?;
         Ok(id)
     }
@@ -165,6 +169,13 @@ impl StateSet {
         Ok(())
     }
 
+    /// Blank text clears the description.
+    pub fn set_description(&mut self, id: u32, text: &str) -> Result<(), Error> {
+        let i = self.index(id)?;
+        self.states[i].description = text.trim().chars().take(MAX_DESCRIPTION_CHARS).collect();
+        Ok(())
+    }
+
     pub fn set_color(&mut self, id: u32, color: [u8; 3]) -> Result<(), Error> {
         let i = self.index(id)?;
         self.states[i].color = color;
@@ -184,8 +195,9 @@ impl StateSet {
     // ---------------------------------------------------------------- saving
     //
     //   version, next id, state count                          3 x u32
-    //   per state: id, r g b 0, name bytes, name, provinces,
-    //              province ids                                u32 each (name is UTF-8)
+    //   per state: id, r g b 0, name length, name, description
+    //              length, description (version 2), province count,
+    //              province ids                                u32 each (text is UTF-8)
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
@@ -197,6 +209,8 @@ impl StateSet {
             put(&mut out, u32::from_le_bytes([s.color[0], s.color[1], s.color[2], 0]));
             put(&mut out, s.name.len() as u32);
             out.extend_from_slice(s.name.as_bytes());
+            put(&mut out, s.description.len() as u32);
+            out.extend_from_slice(s.description.as_bytes());
             put(&mut out, s.provinces.len() as u32);
             for &p in &s.provinces {
                 put(&mut out, p);
@@ -210,8 +224,8 @@ impl StateSet {
     pub fn from_bytes(bytes: &[u8], province_count: usize) -> Result<StateSet, Error> {
         let mut r = Reader { data: bytes, pos: 0 };
         let version = r.u32()?;
-        if version != STATES_VERSION {
-            return Err(bad(format!("states version {version}, this build reads version {STATES_VERSION}")));
+        if version != 1 && version != STATES_VERSION {
+            return Err(bad(format!("states version {version}, this build reads versions 1 and {STATES_VERSION}")));
         }
         let next_id = r.u32()?;
         let count = r.u32()? as usize;
@@ -225,6 +239,12 @@ impl StateSet {
             let c = r.u32()?.to_le_bytes();
             let name_len = r.u32()? as usize;
             let name = std::str::from_utf8(r.take(name_len)?).map_err(|_| bad("a state name is not valid UTF-8"))?.to_string();
+            let description = if version >= 2 {
+                let len = r.u32()? as usize;
+                std::str::from_utf8(r.take(len)?).map_err(|_| bad("a state description is not valid UTF-8"))?.to_string()
+            } else {
+                String::new()
+            };
             let n = r.u32()? as usize;
             let provinces = r.u32s(n)?;
             if id >= next_id || set.states.iter().any(|s| s.id == id) {
@@ -240,7 +260,7 @@ impl StateSet {
                     Some(slot) => *slot = id,
                 }
             }
-            set.states.push(State { id, name, color: [c[0], c[1], c[2]], provinces });
+            set.states.push(State { id, name, description, color: [c[0], c[1], c[2]], provinces });
         }
         if r.pos != bytes.len() {
             return Err(bad("unexpected trailing data"));

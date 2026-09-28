@@ -1,4 +1,4 @@
-use maptool_core::{Biome, Document, Error, Kind, Options, PixelFormat, StateSet, ViewMode, is_map_file, mesh};
+use maptool_core::{Biome, Document, Error, Kind, Level, Options, PixelFormat, StateSet, ViewMode, is_map_file, mesh};
 
 fn rgb(colors: &[u32]) -> Vec<u8> {
     colors.iter().flat_map(|&c| [(c >> 16) as u8, (c >> 8) as u8, c as u8]).collect()
@@ -375,9 +375,9 @@ fn unassigned_provinces_keep_all_their_borders_in_the_state_view() {
 fn group_provinces_is_the_whole_state_or_the_province_itself() {
     let mut doc = grid(3, 2, 4, &exact());
     doc.states.create("S", &[1, 2, 5]).unwrap();
-    assert_eq!(doc.group_provinces(2), vec![1, 2, 5]);
-    assert_eq!(doc.group_provinces(0), vec![0]);
-    assert!(doc.group_provinces(50).is_empty());
+    assert_eq!(doc.group_provinces(2, Level::States), vec![1, 2, 5]);
+    assert_eq!(doc.group_provinces(0, Level::States), vec![0]);
+    assert!(doc.group_provinces(50, Level::States).is_empty());
 }
 
 #[test]

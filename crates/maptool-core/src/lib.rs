@@ -7,6 +7,7 @@
 mod build;
 mod csv;
 mod document;
+mod groups;
 mod label;
 mod mesh;
 mod provinces;
@@ -18,9 +19,10 @@ mod validate;
 use std::fmt::{self, Write};
 
 pub use csv::CsvReport;
-pub use document::{Document, StateStats, ViewMode, biome_names, is_map_file};
+pub use document::{Document, Level, StateStats, Unit, ViewMode, biome_names, filter, is_map_file};
 pub use mesh::{MapMesh, ProvinceInfo};
 pub use provinces::{Biome, Kind, ProvinceMeta, ProvinceTable};
+pub use groups::{Group, GroupKind, GroupSet};
 pub use states::{State, StateSet, auto_color};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]

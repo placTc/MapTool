@@ -17,10 +17,10 @@ use crate::provinces::{Biome, Kind};
 use crate::{Error, GroupKind, GroupSet, MapMesh, ProvinceTable, StateSet};
 
 const MAGIC: &[u8; 4] = b"MTMP";
-const FORMAT_VERSION: u32 = 1;
-/// Edits version 1 had no map name and stored the province data to the end; version 2
-/// added the name; version 3 added countries and strategic regions.
-const EDITS_VERSION: u32 = 3;
+/// The one format this build reads and writes. There is no compatibility with other layouts
+/// while the app is in development: change any saved layout freely, but bump this number when
+/// you do, so files from before are refused with a clear message instead of misread.
+const FORMAT_VERSION: u32 = 2;
 const MAX_MAP_NAME_CHARS: usize = 100;
 
 /// Whether `bytes` look like a saved map (as opposed to an image file).
@@ -595,7 +595,7 @@ impl Document {
 
     /// The map name, states and province metadata, without the mesh.
     ///
-    ///   version, states length, states, province data length, province data,
+    ///   states length, states, province data length, province data,
     ///   name length, name (UTF-8), countries length, countries, regions length,
     ///   regions                                                u32 lengths
     pub fn edits_to_bytes(&self) -> Vec<u8> {
@@ -603,7 +603,6 @@ impl Document {
         let provinces = self.provinces.to_bytes();
         let (countries, regions) = (self.countries.to_bytes(), self.regions.to_bytes());
         let mut out = Vec::with_capacity(24 + states.len() + provinces.len() + self.name.len() + countries.len() + regions.len());
-        out.extend_from_slice(&EDITS_VERSION.to_le_bytes());
         out.extend_from_slice(&(states.len() as u32).to_le_bytes());
         out.extend_from_slice(&states);
         out.extend_from_slice(&(provinces.len() as u32).to_le_bytes());
@@ -618,43 +617,27 @@ impl Document {
     }
 
     /// Replace the name, states, countries, regions and province metadata. Nothing
-    /// changes if `bytes` are invalid. Older edits still load: those from before maps
-    /// had names (version 1) leave the map unnamed, and those from before countries and
-    /// regions (versions 1 and 2) leave both empty.
+    /// changes if `bytes` are invalid.
     pub fn set_edits_from_bytes(&mut self, bytes: &[u8]) -> Result<(), Error> {
         let n = self.mesh.provinces.len();
         let mut r = Reader { data: bytes, pos: 0 };
-        let version = r.u32()?;
-        if !(1..=EDITS_VERSION).contains(&version) {
-            return Err(bad(format!("edits version {version}, this build reads versions 1 to {EDITS_VERSION}")));
+        let len = r.u32()? as usize;
+        let states = StateSet::from_bytes(r.take(len)?, n)?;
+        let len = r.u32()? as usize;
+        let provinces = ProvinceTable::from_bytes(r.take(len)?, n)?;
+        let len = r.u32()? as usize;
+        let name = std::str::from_utf8(r.take(len)?).map_err(|_| bad("the map name is not valid UTF-8"))?.to_string();
+        if name.chars().count() > MAX_MAP_NAME_CHARS {
+            return Err(bad("the map name is too long"));
         }
-        let states_len = r.u32()? as usize;
-        let states = StateSet::from_bytes(r.take(states_len)?, n)?;
-        let mut groups = None;
-        let (provinces, name) = if version == 1 {
-            (ProvinceTable::from_bytes(&bytes[r.pos..], n)?, String::new())
-        } else {
-            let len = r.u32()? as usize;
-            let provinces = ProvinceTable::from_bytes(r.take(len)?, n)?;
-            let name_len = r.u32()? as usize;
-            let name = std::str::from_utf8(r.take(name_len)?).map_err(|_| bad("the map name is not valid UTF-8"))?.to_string();
-            if name.chars().count() > MAX_MAP_NAME_CHARS {
-                return Err(bad("the map name is too long"));
-            }
-            if version >= 3 {
-                let known = |s: u32| states.get(s).is_some();
-                let len = r.u32()? as usize;
-                let countries = GroupSet::from_bytes(r.take(len)?, GroupKind::Country, known)?;
-                let len = r.u32()? as usize;
-                let regions = GroupSet::from_bytes(r.take(len)?, GroupKind::Region, known)?;
-                groups = Some((countries, regions));
-            }
-            if r.pos != bytes.len() {
-                return Err(bad("unexpected trailing data"));
-            }
-            (provinces, name)
-        };
-        let (countries, regions) = groups.unwrap_or_else(|| (GroupSet::new(GroupKind::Country), GroupSet::new(GroupKind::Region)));
+        let known = |s: u32| states.get(s).is_some();
+        let len = r.u32()? as usize;
+        let countries = GroupSet::from_bytes(r.take(len)?, GroupKind::Country, known)?;
+        let len = r.u32()? as usize;
+        let regions = GroupSet::from_bytes(r.take(len)?, GroupKind::Region, known)?;
+        if r.pos != bytes.len() {
+            return Err(bad("unexpected trailing data"));
+        }
         self.countries = countries;
         self.regions = regions;
         self.states = states;
@@ -686,7 +669,9 @@ impl Document {
         };
         let version = word(4)?;
         if version != FORMAT_VERSION {
-            return Err(bad(format!("format version {version}, this build reads version {FORMAT_VERSION}")));
+            return Err(bad(format!(
+                "format version {version}, this build reads version {FORMAT_VERSION}: it was saved by another version of this app"
+            )));
         }
         let len = word(8)? as usize;
         let end = 12usize.checked_add(len).filter(|&e| e <= bytes.len()).ok_or_else(|| bad("truncated"))?;

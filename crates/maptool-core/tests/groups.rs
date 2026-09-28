@@ -66,26 +66,6 @@ fn states_can_have_descriptions() {
     assert_eq!(StateSet::from_bytes(&s.to_bytes(), 4).unwrap(), s);
 }
 
-#[test]
-fn states_saved_without_descriptions_still_load() {
-    // Version 1: id, color, name, provinces; no description.
-    let put = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_le_bytes());
-    let mut v1 = Vec::new();
-    put(&mut v1, 1); // version
-    put(&mut v1, 5); // next id
-    put(&mut v1, 1); // one state
-    put(&mut v1, 3); // id
-    put(&mut v1, u32::from_le_bytes([10, 20, 30, 0]));
-    put(&mut v1, 5);
-    v1.extend_from_slice(b"Alpha");
-    put(&mut v1, 2);
-    put(&mut v1, 1);
-    put(&mut v1, 2);
-    let s = StateSet::from_bytes(&v1, 4).unwrap();
-    let a = s.get(3).unwrap();
-    assert_eq!((a.name.as_str(), a.description.as_str(), a.color, a.provinces.clone()), ("Alpha", "", [10, 20, 30], vec![1, 2]));
-}
-
 // ----------------------------------------------- countries and regions (groups)
 
 #[test]
@@ -205,28 +185,6 @@ fn countries_regions_and_descriptions_survive_saving() {
 }
 
 #[test]
-fn edits_from_before_countries_and_regions_still_load() {
-    let d = with_groups();
-    // Version 2: version, states, province data, name.
-    let (states, provinces) = (d.states.to_bytes(), d.provinces.to_bytes());
-    let put = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_le_bytes());
-    let mut v2 = Vec::new();
-    put(&mut v2, 2);
-    put(&mut v2, states.len() as u32);
-    v2.extend(&states);
-    put(&mut v2, provinces.len() as u32);
-    v2.extend(&provinces);
-    put(&mut v2, d.name().len() as u32);
-    v2.extend(d.name().as_bytes());
-
-    let mut fresh = Document::new(d.mesh.clone());
-    fresh.set_edits_from_bytes(&v2).unwrap();
-    assert_eq!(fresh.states, d.states);
-    assert_eq!(fresh.name(), "Named");
-    assert!(fresh.countries.is_empty() && fresh.regions.is_empty());
-}
-
-#[test]
 fn damaged_group_data_is_rejected_without_changing_anything() {
     let d = with_groups();
     let good = d.edits_to_bytes();
@@ -249,7 +207,6 @@ fn damaged_group_data_is_rejected_without_changing_anything() {
     let put = |out: &mut Vec<u8>, v: u32| out.extend_from_slice(&v.to_le_bytes());
     let (countries, regions) = (d.countries.to_bytes(), d.regions.to_bytes());
     let mut bad = Vec::new();
-    put(&mut bad, 3);
     put(&mut bad, empty_states.len() as u32);
     bad.extend(&empty_states);
     put(&mut bad, provinces.len() as u32);

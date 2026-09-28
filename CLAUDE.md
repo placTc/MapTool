@@ -56,10 +56,15 @@ corner rules) -> `build` (chains linked into rings; SVG paths or flattened rings
   regions are independent of each other; a sea province's biome is always Sea (the land biome is
   kept underneath and comes back if it becomes land); a province's "number" is the CSV ID if one was
   imported, else its 0-based position; single-pixel exclaves and four-way junctions are rejected.
-- **Saved formats are versioned and must keep loading old data.** Container `MTMP` v1; edits v3
-  (v1, v2 still read); states v2 (v1 still read); groups v1; province table v1 whose per-province
-  flags gained bit 8 (number). Biome codes are append-only (Sea = 10). When you change a format:
-  bump the version, keep reading the old one, add a test that builds the old bytes by hand.
+- **One saved format, no compatibility.** The app is in development, not production, so a saved file is
+  only read by the build that wrote it. The container has a single number (`FORMAT_VERSION` in
+  `document.rs`) and files with any other number are refused with "saved by another version of this app".
+  The parts inside (mesh section, edits, states, groups, province table) carry no versions and have no
+  old-layout branches. Change any layout freely, but bump `FORMAT_VERSION` so stale data is refused instead
+  of misread, and start tests from fresh maps. The editor copes with stale data: an unreadable recent map
+  says so and can be removed, and opening the same image again drops its unreadable saved copy and builds
+  fresh. Add real versioning only when there is data worth protecting. (The user decided this, and had
+  asked for the old v1/v2/v3 support to be removed.)
 - **Loading never panics on bad input** and a refused edit/import changes nothing. The tests fuzz
   this (truncate at every length, flip bits). Keep it that way for any new parser.
 - **IndexedDB, not localStorage**, for recent maps (several MB of binary). Three stores: `meta`,
@@ -69,7 +74,7 @@ corner rules) -> `build` (chains linked into rings; SVG paths or flattened rings
 
 ```sh
 export PATH="$HOME/.cargo/bin:$PATH"   # needed in Claude's shell; the user's shell has it
-cargo test --workspace                 # ~100 tests: csv 13, document 30, groups 26, vectorize 31
+cargo test --workspace                 # ~97 tests: csv 13, document 29, groups 24, vectorize 31
 cargo clippy --workspace
 cargo run --release -p maptool-core --example bench    # timings on a synthetic 5632x2048 map
 cargo run --release -p maptool-cli -- map.png -o map.svg

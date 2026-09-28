@@ -96,13 +96,24 @@
       const id = await store.fileId(bytes, isMap ? 'map' : `t${tolerance}`);
       const name = nameOf(file.name);
 
-      // The same file again: open the saved copy, which has the edits made to it.
+      // The same file again: open the saved copy, which has the edits made to it. A copy that cannot
+      // be read (saved by another version of the app) is dropped, and the map is built again.
       const saved = storageOk ? await store.loadRecent(id).catch(() => undefined) : undefined;
+      let reopened: MapDocument | undefined;
       if (saved) {
         status = 'Opening your saved copy…';
         await yieldToPaint();
-        const opened = await openMapBytes(saved.file, { tolerance, validate });
-        if (saved.edits) opened.setEditsBytes(saved.edits);
+        try {
+          reopened = await openMapBytes(saved.file, { tolerance, validate });
+          if (saved.edits) reopened.setEditsBytes(saved.edits);
+        } catch {
+          reopened?.free();
+          reopened = undefined;
+          await store.remove(id).catch(() => {});
+        }
+      }
+      if (saved && reopened) {
+        const opened = reopened;
         if (!opened.mapName) opened.setMapName(saved.meta.name);
         pending = null;
         stored = true;
@@ -118,7 +129,9 @@
         pending = { id, name: opened.mapName, file: isMap ? bytes : null };
         stored = false;
         await show(opened, opened.mapName, id);
-        editorStatus = `${opened.width}×${opened.height}, ${opened.len.toLocaleString()} provinces (${Math.round(loadTimings.wasmMs)} ms)`;
+        editorStatus =
+          `${opened.width}×${opened.height}, ${opened.len.toLocaleString()} provinces (${Math.round(loadTimings.wasmMs)} ms)` +
+          (saved ? ' · its saved copy was from another version of the app, so it was built again' : '');
       }
       status = '';
     } catch (e) {
@@ -153,7 +166,10 @@
       editorStatus = `${Math.round(loadTimings.wasmMs)} ms${note}`;
       status = '';
     } catch (e) {
-      status = `Error: ${message(e)}`;
+      const why = message(e);
+      status = /another version of this app/.test(why)
+        ? 'Error: this map was saved by another version of the app and cannot be opened. Remove it from the list and open the image again.'
+        : `Error: ${why}`;
       await refreshRecents();
     } finally {
       busy = false;

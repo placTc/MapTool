@@ -234,7 +234,7 @@ fn province_metadata_survives_saving_and_rejects_damage() {
     }
     // An unknown biome code.
     let mut bad = good.clone();
-    bad[8 + 1] = 200;
+    bad[4 + 1] = 200;
     assert!(maptool_core::ProvinceTable::from_bytes(&bad, 6).is_err());
 }
 
@@ -319,11 +319,14 @@ fn damaged_map_files_are_rejected_without_panicking() {
 }
 
 #[test]
-fn a_newer_format_is_refused_with_a_clear_message() {
-    let mut bytes = grid(2, 1, 4, &exact()).to_bytes();
-    bytes[4..8].copy_from_slice(&99u32.to_le_bytes());
-    let err = Document::from_bytes(&bytes).unwrap_err().to_string();
-    assert!(err.contains("version 99"), "{err}");
+fn a_file_from_another_format_is_refused_with_a_clear_message() {
+    // There is one format; anything else, older or newer, is refused rather than misread.
+    for other in [1u32, 3, 99] {
+        let mut bytes = grid(2, 1, 4, &exact()).to_bytes();
+        bytes[4..8].copy_from_slice(&other.to_le_bytes());
+        let err = Document::from_bytes(&bytes).unwrap_err().to_string();
+        assert!(err.contains(&format!("version {other}")) && err.contains("another version of this app"), "{err}");
+    }
 }
 
 // ----------------------------------------------------- outlines and state view
@@ -490,7 +493,7 @@ fn only_sea_provinces_have_the_sea_biome() {
 }
 
 #[test]
-fn the_sea_lock_survives_saving_and_older_data() {
+fn the_sea_lock_survives_saving() {
     let mut doc = grid(2, 1, 4, &exact());
     doc.provinces.set_biome(&[0], Biome::Forest).unwrap();
     doc.provinces.set_kind(&[0], Kind::Sea).unwrap();
@@ -500,21 +503,13 @@ fn the_sea_lock_survives_saving_and_older_data() {
     back.set_kind(&[0], Kind::Land).unwrap();
     assert_eq!(back.get(0).unwrap().biome(), Biome::Forest, "the hidden land biome was saved too");
 
-    // Data written before the Sea biome existed: a sea province with an ordinary biome byte.
-    let mut old = doc.provinces.to_bytes();
-    old[8 + 1] = Biome::Hills as u8; // province 0: kind Sea, biome byte Hills
-    let loaded = maptool_core::ProvinceTable::from_bytes(&old, 2).unwrap();
-    assert_eq!(loaded.get(0).unwrap().biome(), Biome::Sea);
-
-    // A land province can never carry the Sea biome, whatever the bytes say.
+    // What is stored is the biome as land, so Sea is never a valid stored biome, whatever the type.
     let mut bad = doc.provinces.to_bytes();
-    bad[8 + 4 + 1] = Biome::Sea as u8; // province 1 is land
+    bad[4 + 4 + 1] = Biome::Sea as u8; // province 1 is land
     assert!(maptool_core::ProvinceTable::from_bytes(&bad, 2).is_err());
-    // A sea province with the Sea code is tolerated and gets a default land biome.
     let mut sea = doc.provinces.to_bytes();
-    sea[8 + 1] = Biome::Sea as u8;
-    let loaded = maptool_core::ProvinceTable::from_bytes(&sea, 2).unwrap();
-    assert_eq!(loaded.get(0).unwrap().biome(), Biome::Sea);
+    sea[4 + 1] = Biome::Sea as u8; // province 0 is sea
+    assert!(maptool_core::ProvinceTable::from_bytes(&sea, 2).is_err());
 }
 
 // ---------------------------------------------------------------- map name
@@ -541,24 +536,6 @@ fn the_map_name_is_saved_with_the_edits_and_the_file() {
     fresh.set_edits_from_bytes(&doc.edits_to_bytes()).unwrap();
     assert_eq!(fresh.name(), "Ærø & Fanø — map");
     assert_eq!(fresh, doc);
-}
-
-#[test]
-fn edits_saved_before_maps_had_names_still_load() {
-    let doc = edited_document();
-    // Version 1: version, states length, states, then the province data to the end.
-    let states = doc.states.to_bytes();
-    let mut v1 = 1u32.to_le_bytes().to_vec();
-    v1.extend((states.len() as u32).to_le_bytes());
-    v1.extend(&states);
-    v1.extend(doc.provinces.to_bytes());
-
-    let mut fresh = Document::new(doc.mesh.clone());
-    fresh.set_name("kept?");
-    fresh.set_edits_from_bytes(&v1).unwrap();
-    assert_eq!(fresh.name(), "", "old edits carry no name");
-    assert_eq!(fresh.states, doc.states);
-    assert_eq!(fresh.provinces, doc.provinces);
 }
 
 #[test]

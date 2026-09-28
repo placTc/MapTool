@@ -6,8 +6,6 @@ use crate::Error;
 use crate::mesh::{Reader, bad};
 
 const NO_STATE: u32 = u32::MAX;
-/// Version 1 had no descriptions.
-const STATES_VERSION: u32 = 2;
 const MAX_NAME_CHARS: usize = 200;
 const MAX_DESCRIPTION_CHARS: usize = 5000;
 
@@ -194,14 +192,13 @@ impl StateSet {
 
     // ---------------------------------------------------------------- saving
     //
-    //   version, next id, state count                          3 x u32
+    //   next id, state count                                   2 x u32
     //   per state: id, r g b 0, name length, name, description
-    //              length, description (version 2), province count,
+    //              length, description, province count,
     //              province ids                                u32 each (text is UTF-8)
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        put(&mut out, STATES_VERSION);
         put(&mut out, self.next_id);
         put(&mut out, self.states.len() as u32);
         for s in &self.states {
@@ -223,10 +220,6 @@ impl StateSet {
     /// provinces. Never panics on bad input; rejects anything inconsistent.
     pub fn from_bytes(bytes: &[u8], province_count: usize) -> Result<StateSet, Error> {
         let mut r = Reader { data: bytes, pos: 0 };
-        let version = r.u32()?;
-        if version != 1 && version != STATES_VERSION {
-            return Err(bad(format!("states version {version}, this build reads versions 1 and {STATES_VERSION}")));
-        }
         let next_id = r.u32()?;
         let count = r.u32()? as usize;
         if count > bytes.len() / 12 {
@@ -239,12 +232,8 @@ impl StateSet {
             let c = r.u32()?.to_le_bytes();
             let name_len = r.u32()? as usize;
             let name = std::str::from_utf8(r.take(name_len)?).map_err(|_| bad("a state name is not valid UTF-8"))?.to_string();
-            let description = if version >= 2 {
-                let len = r.u32()? as usize;
-                std::str::from_utf8(r.take(len)?).map_err(|_| bad("a state description is not valid UTF-8"))?.to_string()
-            } else {
-                String::new()
-            };
+            let len = r.u32()? as usize;
+            let description = std::str::from_utf8(r.take(len)?).map_err(|_| bad("a state description is not valid UTF-8"))?.to_string();
             let n = r.u32()? as usize;
             let provinces = r.u32s(n)?;
             if id >= next_id || set.states.iter().any(|s| s.id == id) {

@@ -10,7 +10,6 @@ use crate::mesh::{Reader, bad};
 use crate::states::auto_color;
 use crate::Error;
 
-const GROUPS_VERSION: u32 = 1;
 const MAX_NAME_CHARS: usize = 200;
 const MAX_DESCRIPTION_CHARS: usize = 5000;
 
@@ -224,13 +223,12 @@ impl GroupSet {
 
     // ---------------------------------------------------------------- saving
     //
-    //   version, next id, group count                            3 x u32
+    //   next id, group count                                     2 x u32
     //   per group: id, r g b 0, name, description (each u32 length
     //              + UTF-8), state count, state ids               u32 each
 
     pub fn to_bytes(&self) -> Vec<u8> {
         let mut out = Vec::new();
-        put(&mut out, GROUPS_VERSION);
         put(&mut out, self.next_id);
         put(&mut out, self.groups.len() as u32);
         for g in &self.groups {
@@ -250,10 +248,6 @@ impl GroupSet {
     /// Never panics on bad input; rejects anything inconsistent.
     pub fn from_bytes(bytes: &[u8], kind: GroupKind, exists: impl Fn(u32) -> bool) -> Result<GroupSet, Error> {
         let mut r = Reader { data: bytes, pos: 0 };
-        let version = r.u32()?;
-        if version != GROUPS_VERSION {
-            return Err(bad(format!("{} data version {version}, this build reads version {GROUPS_VERSION}", kind.noun())));
-        }
         let next_id = r.u32()?;
         let count = r.u32()? as usize;
         if count > bytes.len() / 20 {

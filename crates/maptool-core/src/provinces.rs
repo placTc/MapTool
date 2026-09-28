@@ -3,7 +3,6 @@
 use crate::mesh::{Reader, bad};
 use crate::Error;
 
-const TABLE_VERSION: u32 = 1;
 const MAX_NAME_CHARS: usize = 200;
 const MAX_DESCRIPTION_CHARS: usize = 5000;
 
@@ -248,15 +247,14 @@ impl ProvinceTable {
 
     // ---------------------------------------------------------------- saving
     //
-    //   version, province count                                  2 x u32
+    //   province count                                           u32
     //   per province: kind, land biome, flags, 0                 4 x u8
     //     flags: 1 = name, 2 = description, 4 = population, 8 = number
     //     then, in that order: name (u32 length + UTF-8), description
     //     (same), population (u64), number (u32)
 
     pub fn to_bytes(&self) -> Vec<u8> {
-        let mut out = Vec::with_capacity(8 + self.items.len() * 4);
-        out.extend_from_slice(&TABLE_VERSION.to_le_bytes());
+        let mut out = Vec::with_capacity(4 + self.items.len() * 4);
         out.extend_from_slice(&(self.items.len() as u32).to_le_bytes());
         for m in &self.items {
             let flags = m.name.is_some() as u8
@@ -284,10 +282,6 @@ impl ProvinceTable {
     /// `province_count` provinces. Never panics on bad input.
     pub fn from_bytes(bytes: &[u8], province_count: usize) -> Result<ProvinceTable, Error> {
         let mut r = Reader { data: bytes, pos: 0 };
-        let version = r.u32()?;
-        if version != TABLE_VERSION {
-            return Err(bad(format!("province data version {version}, this build reads version {TABLE_VERSION}")));
-        }
         if r.u32()? as usize != province_count {
             return Err(bad("province data does not match the map's province count"));
         }
@@ -299,13 +293,8 @@ impl ProvinceTable {
                 return Err(bad("unknown province data flags"));
             }
             let kind = Kind::from_u8(kind).ok_or_else(|| bad("unknown province type"))?;
-            let mut land_biome = Biome::from_u8(biome).ok_or_else(|| bad("unknown biome"))?;
-            if land_biome == Biome::Sea {
-                if kind == Kind::Land {
-                    return Err(bad("a land province cannot have the Sea biome"));
-                }
-                land_biome = Biome::Plains; // a sea province; its land biome was never recorded
-            }
+            // What is stored is the biome a province has as land; Sea is never stored.
+            let land_biome = Biome::from_u8(biome).filter(|b| *b != Biome::Sea).ok_or_else(|| bad("unknown biome"))?;
             let name = if flags & 1 != 0 { Some(read_text(&mut r)?) } else { None };
             let description = if flags & 2 != 0 { Some(read_text(&mut r)?) } else { None };
             let population = if flags & 4 != 0 { Some(u64::from_le_bytes(r.take(8)?.try_into().unwrap())) } else { None };

@@ -1,5 +1,6 @@
 <script lang="ts">
   import { hex, unhex, type MapDocument } from '../lib/map';
+  import { confirmAction, isMultiSelectClick, populationSummary, selectOnFocus, toUint32Array } from '../lib/utils';
 
   /** A panel for countries or for strategic regions: both are groups of states. */
   interface Props {
@@ -47,7 +48,7 @@
   });
 
   const stateIds = $derived(Array.from(selectedStates));
-  const typed = () => Uint32Array.from(stateIds);
+  const typed = () => toUint32Array(stateIds);
   /** How many of the selected states are already in a group of this kind. */
   const grouped = $derived.by(() => {
     rev;
@@ -73,7 +74,7 @@
   const memberNames = (id: number) => Array.from(doc.groupStates(kind, id), (s) => doc.stateName(s)).join(', ');
 
   function remove(id: number, name: string) {
-    if (confirm(`Delete the ${noun} "${name}"? Its states stay, but belong to no ${noun}.`)) ondelete(id);
+    confirmAction(`Delete the ${noun} "${name}"? Its states stay, but belong to no ${noun}.`, () => ondelete(id));
   }
 </script>
 
@@ -138,9 +139,9 @@
             type="text"
             value={g.name}
             onchange={(e) => mutate(() => doc.renameGroup(kind, g.id, e.currentTarget.value))}
-            onfocus={(e) => e.currentTarget.select()}
+            onfocus={selectOnFocus}
           />
-          <button class="btn btn-secondary pick" onclick={(e) => onselect(g.id, e.ctrlKey || e.metaKey || e.shiftKey)} title="Select this {noun} (ctrl-click adds)">
+          <button class="btn btn-secondary pick" onclick={(e) => onselect(g.id, isMultiSelectClick(e))} title="Select this {noun} (ctrl-click adds)">
             {g.states}
           </button>
         </div>
@@ -155,7 +156,7 @@
             <dt>States</dt><dd>{g.states}{g.states ? `: ${memberNames(g.id)}` : ''}</dd>
             <dt>Provinces</dt><dd>{g.provinces} ({g.land} land, {g.sea} sea)</dd>
             <dt>Area</dt><dd>{g.pixels.toLocaleString()} px</dd>
-            <dt>Population</dt><dd>{g.populated ? `${g.population.toLocaleString()} (set on ${g.populated})` : 'not set'}</dd>
+            <dt>Population</dt><dd>{populationSummary(g.population, g.populated)}</dd>
           </dl>
           <div class="actions">
             <button class="btn btn-secondary" onclick={() => onzoom(doc.provincesOfGroup(kind, g.id))} disabled={g.provinces === 0}>Zoom to</button>

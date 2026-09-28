@@ -1,5 +1,6 @@
 <script lang="ts">
   import { biomeList, hex, type MapDocument } from '../lib/map';
+  import { populationSummary, toUint32Array } from '../lib/utils';
 
   interface Props {
     doc: MapDocument;
@@ -16,7 +17,7 @@
 
   // The last biome is Sea: only sea provinces have it, and it cannot be picked.
   const landBiomes = biomeList().slice(0, -1);
-  const typed = () => Uint32Array.from(ids);
+  const typed = () => toUint32Array(ids);
 
   const single = $derived(ids.length === 1 ? ids[0] : null);
   /**
@@ -36,7 +37,7 @@
   });
   // Totals over the whole selection come from the document in one call each: asking about
   // thousands of provinces one at a time was slow.
-  const typedIds = $derived(Uint32Array.from(ids));
+  const typedIds = $derived(toUint32Array(ids));
   const stats = $derived.by(() => {
     rev;
     const [, land, sea, pixels, population, populated] = doc.provinceStats(typedIds);
@@ -133,7 +134,7 @@
     {/key}
   {:else}
     <p class="sum">
-      {pixels.toLocaleString()} px{populated.known ? ` · population ${populated.total.toLocaleString()} (set on ${populated.known})` : ''}
+      {pixels.toLocaleString()} px{populated.known ? ` · population ${populationSummary(populated.total, populated.known)}` : ''}
     </p>
   {/if}
 

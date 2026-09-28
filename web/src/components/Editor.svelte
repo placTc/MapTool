@@ -4,6 +4,7 @@
   import { fileSafe } from '../lib/files';
   import { biomeList, filters, LEVEL, type MapDocument, type ViewKind } from '../lib/map';
   import { TOOLS, type ToolId } from '../lib/tools';
+  import { isMultiSelectClick, selectOnFocus } from '../lib/utils';
   import BoxToolPanel from './BoxToolPanel.svelte';
   import GroupsPanel from './GroupsPanel.svelte';
   import InfoTip from './InfoTip.svelte';
@@ -420,7 +421,7 @@
       marquee = preview = null;
     } else if (!d.moved && d.button === 0) {
       // Only a plain left click selects; a right or middle click that did not drag does nothing.
-      select(pickAt(e.clientX, e.clientY), e.ctrlKey || e.metaKey || e.shiftKey);
+      select(pickAt(e.clientX, e.clientY), isMultiSelectClick(e));
     }
   }
 
@@ -554,7 +555,7 @@
       placeholder={name}
       value={mapName}
       onchange={(e) => mutate(() => doc.setMapName(e.currentTarget.value))}
-      onfocus={(e) => e.currentTarget.select()}
+      onfocus={selectOnFocus}
       onkeydown={(e) => e.key === 'Enter' && e.currentTarget.blur()}
     />
 

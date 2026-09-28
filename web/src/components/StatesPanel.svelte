@@ -1,5 +1,6 @@
 <script lang="ts">
   import { hex, unhex, type MapDocument } from '../lib/map';
+  import { confirmAction, isMultiSelectClick, populationSummary, selectOnFocus } from '../lib/utils';
 
   interface Props {
     doc: MapDocument;
@@ -38,7 +39,7 @@
   });
 
   function remove(id: number, name: string, provinces: number) {
-    if (confirm(`Delete "${name}"? Its ${provinces} province${provinces === 1 ? '' : 's'} become unassigned.`)) ondelete(id);
+    confirmAction(`Delete "${name}"? Its ${provinces} province${provinces === 1 ? '' : 's'} become unassigned.`, () => ondelete(id));
   }
 </script>
 
@@ -68,9 +69,9 @@
               type="text"
               value={s.name}
               onchange={(e) => mutate(() => doc.renameState(s.id, e.currentTarget.value))}
-              onfocus={(e) => e.currentTarget.select()}
+              onfocus={selectOnFocus}
             />
-            <button class="btn btn-secondary pick" onclick={(e) => onselect(s.id, e.ctrlKey || e.metaKey || e.shiftKey)} title="Select this state (ctrl-click adds)">
+            <button class="btn btn-secondary pick" onclick={(e) => onselect(s.id, isMultiSelectClick(e))} title="Select this state (ctrl-click adds)">
               {s.provinces}
             </button>
           </div>
@@ -86,7 +87,7 @@
               <dt>Region</dt><dd>{s.region ?? 'none'}</dd>
               <dt>Provinces</dt><dd>{s.provinces} ({s.land} land, {s.sea} sea)</dd>
               <dt>Area</dt><dd>{s.pixels.toLocaleString()} px</dd>
-              <dt>Population</dt><dd>{s.populated ? `${s.population.toLocaleString()} (set on ${s.populated})` : 'not set'}</dd>
+              <dt>Population</dt><dd>{populationSummary(s.population, s.populated)}</dd>
             </dl>
             <div class="actions">
               <button class="btn btn-secondary" onclick={() => onzoom(doc.stateProvinces(s.id))}>Zoom to</button>

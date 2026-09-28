@@ -5,7 +5,7 @@
 use std::collections::HashMap;
 
 use crate::provinces::Kind;
-use crate::{Document, Error};
+use crate::{Document, Error, ProvinceInfo};
 
 /// How many problems are kept as text; the rest are only counted.
 const MAX_PROBLEMS: usize = 200;
@@ -169,7 +169,156 @@ fn header_meaning(cell: &str) -> Option<Column> {
     }
 }
 
+/// Which column holds each field. `kind`/`id` are optional: either may be missing,
+/// as long as at least one of them is present.
+struct Columns {
+    color: usize,
+    kind: Option<usize>,
+    id: Option<usize>,
+}
+
+/// Work out which columns hold color/type/ID, from an explicit header if there is
+/// one, else by sampling the data. Errors if no color column, or neither a type
+/// nor an ID column, can be found.
+fn detect_columns(header_row: &[String], has_header: bool, data: &[Vec<String>], width: usize) -> Result<Columns, Error> {
+    let mut by_header: HashMap<usize, Column> = HashMap::new();
+    if has_header {
+        for (i, cell) in header_row.iter().enumerate() {
+            if let Some(c) = header_meaning(cell) {
+                by_header.entry(i).or_insert(c);
+            }
+        }
+    }
+    let named = |want: Column| (0..width).find(|i| by_header.get(i) == Some(&want));
+
+    // Work out the rest from the data itself.
+    let sample = &data[..data.len().min(SAMPLE_ROWS)];
+    let rate = |col: usize, test: &dyn Fn(&str) -> bool| -> f64 {
+        let cells: Vec<_> = sample.iter().filter_map(|r| r.get(col)).collect();
+        if cells.is_empty() { 0.0 } else { cells.iter().filter(|c| test(c)).count() as f64 / cells.len() as f64 }
+    };
+    let color = named(Column::Color).or_else(|| {
+        // Prefer columns that are clearly hex (a `#` or a letter) over ones that just have six digits.
+        (0..width)
+            .map(|c| (c, rate(c, &|s| hex_color(s).is_some()), rate(c, &|s| looks_like_hex(s))))
+            .filter(|&(_, any, _)| any >= 0.9)
+            .max_by(|a, b| (a.2 + a.1).total_cmp(&(b.2 + b.1)).then(b.0.cmp(&a.0)))
+            .map(|(c, _, _)| c)
+    });
+    let Some(color) = color else {
+        return Err(fail("could not find a column of hex colors (like #1a2b3c)"));
+    };
+    let kind = named(Column::Kind).or_else(|| (0..width).find(|&c| c != color && rate(c, &|s| kind_of(s).is_some()) >= 0.9));
+    let id = named(Column::Id)
+        .or_else(|| (0..width).find(|&c| c != color && Some(c) != kind && rate(c, &|s| id_of(s).is_some()) >= 0.9));
+    if kind.is_none() && id.is_none() {
+        return Err(fail("could not find a province type column (land or sea) or an ID column next to the colors"));
+    }
+    Ok(Columns { color, kind, id })
+}
+
+/// What checking every CSV row against the map's provinces found.
+struct RowValidation {
+    /// Rows that can be applied: (province, type if the CSV has one, id if it does).
+    accepted: Vec<(u32, Option<Kind>, Option<u32>)>,
+    /// Every problem found, one line each, at most `MAX_PROBLEMS`.
+    problems: Vec<String>,
+    /// The true number of problems, which may be larger than `problems.len()`.
+    problem_count: usize,
+}
+
+/// Check every row against the map's provinces before anything is applied: a bad
+/// value, a color that is not in the map, or a color or ID an earlier row already
+/// used is a problem, and that row is left out of `accepted`.
+fn validate_rows(data: &[Vec<String>], has_header: bool, columns: &Columns, provinces: &[ProvinceInfo]) -> RowValidation {
+    let mut province_of: HashMap<[u8; 3], u32> = HashMap::new();
+    for p in provinces {
+        province_of.insert(p.color, p.id);
+    }
+    let mut problems: Vec<String> = Vec::new();
+    let mut problem_count = 0;
+    let mut problem = |problems: &mut Vec<String>, text: String| {
+        problem_count += 1;
+        if problems.len() < MAX_PROBLEMS {
+            problems.push(text);
+        }
+    };
+    let mut seen_colors: HashMap<[u8; 3], usize> = HashMap::new();
+    let mut seen_ids: HashMap<u32, usize> = HashMap::new();
+    let mut accepted: Vec<(u32, Option<Kind>, Option<u32>)> = Vec::new();
+
+    for (n, row) in data.iter().enumerate() {
+        let line = n + 1 + usize::from(has_header);
+        let cell = |col: usize| row.get(col).map_or("", |s| s.as_str());
+        let Some(color) = hex_color(cell(columns.color)) else {
+            problem(&mut problems, format!("row {line}: \"{}\" is not a hex color (like #1a2b3c)", cell(columns.color)));
+            continue;
+        };
+        let kind = match columns.kind {
+            None => None,
+            Some(c) => match kind_of(cell(c)) {
+                Some(k) => Some(k),
+                None => {
+                    problem(&mut problems, format!("row {line}: \"{}\" is not a province type (land or sea)", cell(c)));
+                    continue;
+                }
+            },
+        };
+        let id = match columns.id {
+            None => None,
+            Some(c) => match id_of(cell(c)) {
+                Some(i) => Some(i),
+                None => {
+                    problem(&mut problems, format!("row {line}: \"{}\" is not a whole number for an ID", cell(c)));
+                    continue;
+                }
+            },
+        };
+        let Some(&province) = province_of.get(&color) else {
+            problem(&mut problems, format!("row {line}: {} is not a color in this map", rgb_text(color)));
+            continue;
+        };
+        if let Some(first) = seen_colors.get(&color) {
+            problem(&mut problems, format!("row {line}: {} appears again (first in row {first})", rgb_text(color)));
+            continue;
+        }
+        if let Some(first) = id.and_then(|i| seen_ids.get(&i)) {
+            problem(&mut problems, format!("row {line}: ID {} is used again (first in row {first})", id.unwrap()));
+            continue;
+        }
+        seen_colors.insert(color, line);
+        if let Some(i) = id {
+            seen_ids.insert(i, line);
+        }
+        accepted.push((province, kind, id));
+    }
+    RowValidation { accepted, problems, problem_count }
+}
+
 impl Document {
+    /// Apply accepted rows' numbers and types. Importing replaces all earlier IDs
+    /// (when the CSV has an ID column); types only change for provinces the CSV
+    /// lists. Returns the number of rows that set land / sea.
+    fn apply_accepted_rows(&mut self, accepted: &[(u32, Option<Kind>, Option<u32>)], has_ids: bool) -> Result<(usize, usize), Error> {
+        if has_ids {
+            self.provinces.clear_numbers();
+        }
+        let (mut land, mut sea) = (0, 0);
+        for &(province, kind, id) in accepted {
+            if let Some(i) = id {
+                self.provinces.set_number(province, Some(i))?;
+            }
+            if let Some(k) = kind {
+                self.provinces.set_kind(&[province], k)?;
+                match k {
+                    Kind::Land => land += 1,
+                    Kind::Sea => sea += 1,
+                }
+            }
+        }
+        Ok((land, sea))
+    }
+
     /// Apply a CSV that gives, per row, a hex color, a province type (`land` or `sea`) and
     /// the province's own number (ID). Rows are matched to provinces by their source color.
     ///
@@ -193,135 +342,25 @@ impl Document {
         let data = &rows[usize::from(header)..];
         let width = rows.iter().map(|r| r.len()).max().unwrap_or(0);
 
-        let mut by_header: HashMap<usize, Column> = HashMap::new();
-        if header {
-            for (i, cell) in first.iter().enumerate() {
-                if let Some(c) = header_meaning(cell) {
-                    by_header.entry(i).or_insert(c);
-                }
-            }
-        }
-        let named = |want: Column| (0..width).find(|i| by_header.get(i) == Some(&want));
-
-        // Work out the rest from the data itself.
-        let sample = &data[..data.len().min(SAMPLE_ROWS)];
-        let rate = |col: usize, test: &dyn Fn(&str) -> bool| -> f64 {
-            let cells: Vec<_> = sample.iter().filter_map(|r| r.get(col)).collect();
-            if cells.is_empty() { 0.0 } else { cells.iter().filter(|c| test(c)).count() as f64 / cells.len() as f64 }
-        };
-        let color_col = named(Column::Color).or_else(|| {
-            // Prefer columns that are clearly hex (a `#` or a letter) over ones that just have six digits.
-            (0..width)
-                .map(|c| (c, rate(c, &|s| hex_color(s).is_some()), rate(c, &|s| looks_like_hex(s))))
-                .filter(|&(_, any, _)| any >= 0.9)
-                .max_by(|a, b| (a.2 + a.1).total_cmp(&(b.2 + b.1)).then(b.0.cmp(&a.0)))
-                .map(|(c, _, _)| c)
-        });
-        let Some(color_col) = color_col else {
-            return Err(fail("could not find a column of hex colors (like #1a2b3c)"));
-        };
-        let kind_col = named(Column::Kind)
-            .or_else(|| (0..width).find(|&c| c != color_col && rate(c, &|s| kind_of(s).is_some()) >= 0.9));
-        let id_col = named(Column::Id)
-            .or_else(|| (0..width).find(|&c| c != color_col && Some(c) != kind_col && rate(c, &|s| id_of(s).is_some()) >= 0.9));
-        if kind_col.is_none() && id_col.is_none() {
-            return Err(fail("could not find a province type column (land or sea) or an ID column next to the colors"));
-        }
-
-        // Check every row before changing anything.
-        let mut province_of: HashMap<[u8; 3], u32> = HashMap::new();
-        for p in &self.mesh.provinces {
-            province_of.insert(p.color, p.id);
-        }
-        let mut problems: Vec<String> = Vec::new();
-        let mut problem_count = 0;
-        let mut problem = |problems: &mut Vec<String>, text: String| {
-            problem_count += 1;
-            if problems.len() < MAX_PROBLEMS {
-                problems.push(text);
-            }
-        };
-        let mut seen_colors: HashMap<[u8; 3], usize> = HashMap::new();
-        let mut seen_ids: HashMap<u32, usize> = HashMap::new();
-        let mut accepted: Vec<(u32, Option<Kind>, Option<u32>)> = Vec::new();
-
-        for (n, row) in data.iter().enumerate() {
-            let line = n + 1 + usize::from(header);
-            let cell = |col: usize| row.get(col).map_or("", |s| s.as_str());
-            let Some(color) = hex_color(cell(color_col)) else {
-                problem(&mut problems, format!("row {line}: \"{}\" is not a hex color (like #1a2b3c)", cell(color_col)));
-                continue;
-            };
-            let kind = match kind_col {
-                None => None,
-                Some(c) => match kind_of(cell(c)) {
-                    Some(k) => Some(k),
-                    None => {
-                        problem(&mut problems, format!("row {line}: \"{}\" is not a province type (land or sea)", cell(c)));
-                        continue;
-                    }
-                },
-            };
-            let id = match id_col {
-                None => None,
-                Some(c) => match id_of(cell(c)) {
-                    Some(i) => Some(i),
-                    None => {
-                        problem(&mut problems, format!("row {line}: \"{}\" is not a whole number for an ID", cell(c)));
-                        continue;
-                    }
-                },
-            };
-            let Some(&province) = province_of.get(&color) else {
-                problem(&mut problems, format!("row {line}: {} is not a color in this map", rgb_text(color)));
-                continue;
-            };
-            if let Some(first) = seen_colors.get(&color) {
-                problem(&mut problems, format!("row {line}: {} appears again (first in row {first})", rgb_text(color)));
-                continue;
-            }
-            if let Some(first) = id.and_then(|i| seen_ids.get(&i)) {
-                problem(&mut problems, format!("row {line}: ID {} is used again (first in row {first})", id.unwrap()));
-                continue;
-            }
-            seen_colors.insert(color, line);
-            if let Some(i) = id {
-                seen_ids.insert(i, line);
-            }
-            accepted.push((province, kind, id));
-        }
-
-        if accepted.is_empty() {
-            let why = problems.first().map(|p| format!(" (first problem: {p})")).unwrap_or_default();
+        let columns = detect_columns(first, header, data, width)?;
+        let result = validate_rows(data, header, &columns, &self.mesh.provinces);
+        if result.accepted.is_empty() {
+            let why = result.problems.first().map(|p| format!(" (first problem: {p})")).unwrap_or_default();
             return Err(fail(format!("none of the {} rows could be applied to this map{why}", data.len())));
         }
 
-        if id_col.is_some() {
-            self.provinces.clear_numbers();
-        }
-        let (mut land, mut sea) = (0, 0);
-        for &(province, kind, id) in &accepted {
-            if let Some(i) = id {
-                self.provinces.set_number(province, Some(i))?;
-            }
-            if let Some(k) = kind {
-                self.provinces.set_kind(&[province], k)?;
-                match k {
-                    Kind::Land => land += 1,
-                    Kind::Sea => sea += 1,
-                }
-            }
-        }
+        let matched = result.accepted.len();
+        let (land, sea) = self.apply_accepted_rows(&result.accepted, columns.id.is_some())?;
         Ok(CsvReport {
             rows: data.len(),
-            matched: accepted.len(),
+            matched,
             land,
             sea,
-            unlisted: self.mesh.provinces.len() - accepted.len(),
-            has_types: kind_col.is_some(),
-            has_ids: id_col.is_some(),
-            problems,
-            problem_count,
+            unlisted: self.mesh.provinces.len() - matched,
+            has_types: columns.kind.is_some(),
+            has_ids: columns.id.is_some(),
+            problems: result.problems,
+            problem_count: result.problem_count,
         })
     }
 }

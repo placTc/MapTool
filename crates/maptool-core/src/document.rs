@@ -113,6 +113,9 @@ impl Hasher for FastHasher {
     }
 }
 
+/// A border segment as its two endpoints' coordinate bits.
+type SegmentKey = ((u32, u32), (u32, u32));
+
 /// Which province owns each border segment, and which lies across it.
 fn segment_owners(mesh: &MapMesh) -> (Vec<u32>, Vec<u32>) {
     let n = mesh.line_indices.len() / 2;
@@ -123,14 +126,16 @@ fn segment_owners(mesh: &MapMesh) -> (Vec<u32>, Vec<u32>) {
     let point = |i: u32| (mesh.line_positions[i as usize * 2].to_bits(), mesh.line_positions[i as usize * 2 + 1].to_bits());
     // Neighbouring provinces share bit-identical border points, so a segment's
     // reverse belongs to the province across the border.
-    let mut owner: HashMap<((u32, u32), (u32, u32)), u32, BuildHasherDefault<FastHasher>> =
+    let mut owner: HashMap<SegmentKey, u32, BuildHasherDefault<FastHasher>> =
         HashMap::with_capacity_and_hasher(n, Default::default());
-    for (k, pair) in mesh.line_indices.chunks_exact(2).enumerate() {
+    for (k, pair) in mesh.line_indices.as_chunks::<2>().0.iter().enumerate() {
         owner.insert((point(pair[0]), point(pair[1])), province[k]);
     }
     let mate = mesh
         .line_indices
-        .chunks_exact(2)
+        .as_chunks::<2>()
+        .0
+        .iter()
         .map(|pair| owner.get(&(point(pair[1]), point(pair[0]))).copied().unwrap_or(NO_PROVINCE))
         .collect();
     (province, mate)
@@ -164,7 +169,7 @@ impl Document {
     /// provinces of the same state. Index pairs into `mesh.line_positions`.
     pub fn state_border_indices(&self) -> Vec<u32> {
         let mut out = Vec::new();
-        for (k, pair) in self.mesh.line_indices.chunks_exact(2).enumerate() {
+        for (k, pair) in self.mesh.line_indices.as_chunks::<2>().0.iter().enumerate() {
             let (p, m) = (self.segment_province[k], self.segment_mate[k]);
             if m != NO_PROVINCE && self.group(p) == self.group(m) {
                 continue;

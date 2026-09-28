@@ -90,7 +90,7 @@ the wheel zooms, Esc clears the selection.
   its state and then to itself (dimmed). The sidebar shows province counts, area and
   population for what is selected.
 
-**Import CSV.** Load a CSV whose rows give a hex color, a province type (`land` or `sea`),
+**Import CSV.** (Hover the **i** next to the button for a short version of this.) Load a CSV whose rows give a hex color, a province type (`land` or `sea`),
 and the province's own ID (a whole number). Rows are matched to provinces by the color in the
 image, and the ID becomes the province's number: it is shown as `#ID` and is the province's
 name when it has none.

@@ -6,6 +6,7 @@
   import { TOOLS, type ToolId } from '../lib/tools';
   import BoxToolPanel from './BoxToolPanel.svelte';
   import GroupsPanel from './GroupsPanel.svelte';
+  import InfoTip from './InfoTip.svelte';
   import SaveDialog from './SaveDialog.svelte';
   import SelectionPanel from './SelectionPanel.svelte';
   import StatesPanel from './StatesPanel.svelte';
@@ -540,10 +541,30 @@
 
     <button class="secondary" onclick={fit}>Fit</button>
     <button class="secondary" onclick={() => zoomToProvinces(highlighted)} disabled={highlighted.size === 0}>Zoom to selection</button>
-    <label class="button secondary" title="Load a CSV that gives each province's type (land or sea) and ID by its hex color">
-      Import CSV
-      <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" onchange={csvPicked} hidden />
-    </label>
+    <span class="with-info">
+      <label class="button secondary">
+        Import CSV
+        <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" onchange={csvPicked} hidden />
+      </label>
+      <InfoTip label="About importing a CSV">
+        <h4>Import a CSV</h4>
+        <p>Sets each province's <strong>type</strong> and <strong>ID</strong> from a file, matching every row to a province by its <strong>hex color</strong> in the image.</p>
+        <ul>
+          <li><strong>color</strong>: <code>#1a2b3c</code>, <code>1a2b3c</code> or <code>0x1a2b3c</code></li>
+          <li><strong>type</strong>: <code>land</code> or <code>sea</code></li>
+          <li><strong>id</strong>: a whole number. It becomes the province's number, and its name until you give it one.</li>
+        </ul>
+        <p>Columns can be in any order, separated by commas, semicolons or tabs. A header row is optional (<code>color</code> or <code>hex</code>, <code>type</code>, <code>id</code> or <code>number</code>), and the type or the ID column can be left out.</p>
+        <pre>color,type,id
+#1a2b3c,land,101
+#4d5e6f,sea,102</pre>
+        <p class="muted">
+          Rows with a bad value, a color that is not in this map, or a color or ID already used in an earlier row are skipped and listed
+          afterwards; the rest are applied. Importing replaces earlier IDs, and types only change for provinces the file lists.
+          Separate red, green and blue columns are not supported.
+        </p>
+      </InfoTip>
+    </span>
     <button class="secondary" onclick={() => (saving = true)} title="Save the map, with everything you have added, as a file">Save as…</button>
     <span class="status">{status}</span>
   </header>
@@ -739,6 +760,11 @@
     border-radius: 4px;
     padding: 5px 11px;
     cursor: pointer;
+  }
+  .with-info {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
   }
   button:disabled {
     opacity: 0.5;

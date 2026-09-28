@@ -62,8 +62,8 @@ region in its sidebar list takes you to its view. Switching views clears the sel
 creating a state, country or region from a selection clears it too.
 
 - *Tools*: the tool sidebar on the left picks what dragging on the map does. **Pan** (`P`)
-  moves the map; **Box** (`B`) draws a selection box. Clicking selects with either, and holding
-  Space pans with any tool. Keys are ignored while you type in a field. A new tool is one entry
+  moves the map; **Box** (`B`) draws a selection box. Clicking selects with either. Right-drag,
+  middle-drag, or holding Space pans with any tool. Keys are ignored while you type in a field. A new tool is one entry
   in `web/src/lib/tools.ts` plus its behavior in the editor.
 - *Box selection* (the **Box** tool, or press `B`): drag a rectangle over the map. In
   the sidebar, choose what dropping the box does (replace the selection, add to it, or
@@ -73,7 +73,7 @@ creating a state, country or region from a selection clears it too.
   apply in the Provinces view only). In the other views a box selects the states, countries or
   regions that have a province it touches. The objects a box would take light up while you drag.
   Buttons deselect provinces already in states, select every unassigned province, or invert
-  the selection. Pan with middle-drag or Space held, or switch back to the **Pan** tool.
+  the selection. Pan with right-drag, middle-drag or Space held, or switch back to the **Pan** tool.
 - *States* are named, colored groups of provinces, with an optional description. Create one
   from the selection, add the selection to an existing state, rename, recolor or delete it.
   A province is in at most one state: putting it in another moves it.

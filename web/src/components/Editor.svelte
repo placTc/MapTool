@@ -368,18 +368,24 @@
     return id < 0 ? null : id;
   }
 
-  type Drag = { kind: 'pan'; x: number; y: number; cam: Camera; moved: boolean } | { kind: 'box'; x: number; y: number; moved: boolean };
+  type Drag =
+    | { kind: 'pan'; x: number; y: number; cam: Camera; moved: boolean; button: number }
+    | { kind: 'box'; x: number; y: number; moved: boolean; button: number };
   let drag: Drag | null = null;
 
   function onPointerDown(e: PointerEvent) {
-    if (e.button === 2) return;
+    // Left, middle and right only; the back and forward buttons do nothing here.
+    if (e.button > 2) return;
     try {
       canvasEl!.setPointerCapture(e.pointerId);
     } catch {
       // The pointer is already gone; dragging still works without capture.
     }
-    const pan = tool === 'pan' || e.button === 1 || spaceHeld;
-    drag = pan ? { kind: 'pan', x: e.clientX, y: e.clientY, cam, moved: false } : { kind: 'box', x: e.clientX, y: e.clientY, moved: false };
+    // The right and middle buttons pan with any tool; the left button does what the tool does.
+    const pan = tool === 'pan' || e.button !== 0 || spaceHeld;
+    drag = pan
+      ? { kind: 'pan', x: e.clientX, y: e.clientY, cam, moved: false, button: e.button }
+      : { kind: 'box', x: e.clientX, y: e.clientY, moved: false, button: e.button };
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -412,7 +418,8 @@
     if (d.kind === 'box' && d.moved) {
       applyBox(boxProvinces(d.x, d.y, e.clientX, e.clientY), e);
       marquee = preview = null;
-    } else if (!d.moved) {
+    } else if (!d.moved && d.button === 0) {
+      // Only a plain left click selects; a right or middle click that did not drag does nothing.
       select(pickAt(e.clientX, e.clientY), e.ctrlKey || e.metaKey || e.shiftKey);
     }
   }
@@ -608,9 +615,9 @@
     <section class="stage" bind:clientWidth={cw} bind:clientHeight={ch}>
       <canvas
         bind:this={canvasEl}
-        class:pan={tool === 'pan' || spaceHeld}
+        class:pan={tool === 'pan' || spaceHeld || panning}
         class:panning
-        class:boxing={tool === 'box' && !spaceHeld}
+        class:boxing={tool === 'box' && !spaceHeld && !panning}
         use:wheelAction
         onpointerdown={onPointerDown}
         onpointermove={onPointerMove}

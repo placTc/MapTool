@@ -39,7 +39,7 @@
   {#if layer !== 'provinces'}
     <p class="hint">In this view a box selects <strong>{noun}</strong>: the ones with a province that it {whole ? 'covers' : 'touches'}.</p>
   {/if}
-  <p class="hint">Drag a box on the map. Hold <kbd>Shift</kbd> to add or <kbd>Alt</kbd> to remove, whatever the mode. Middle-drag or hold <kbd>Space</kbd> to pan.</p>
+  <p class="hint">Drag a box on the map. Hold <kbd>Shift</kbd> to add or <kbd>Alt</kbd> to remove, whatever the mode. Right-drag, middle-drag or hold <kbd>Space</kbd> to pan.</p>
 
   <fieldset>
     <legend>When you drop the box</legend>

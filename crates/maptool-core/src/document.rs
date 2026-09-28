@@ -197,7 +197,7 @@ fn segment_owners(mesh: &MapMesh) -> (Vec<u32>, Vec<u32>) {
     for (id, r) in mesh.line_ranges.iter().enumerate() {
         province[(r[0] / 2) as usize..((r[0] + r[1]) / 2) as usize].fill(id as u32);
     }
-    let point = |i: u32| (mesh.line_positions[i as usize * 2].to_bits(), mesh.line_positions[i as usize * 2 + 1].to_bits());
+    let point = |i: u32| mesh.border_point_bits(i);
     // Neighbouring provinces share bit-identical border points, so a segment's
     // reverse belongs to the province across the border.
     let mut owner: HashMap<SegmentKey, u32, BuildHasherDefault<FastHasher>> =

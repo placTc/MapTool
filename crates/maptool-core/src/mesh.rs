@@ -40,12 +40,19 @@ pub struct MapMesh {
 }
 
 impl MapMesh {
+    /// Bit pattern of border-point vertex `i`'s position, for exact-match hashing.
+    /// Neighbours share bit-identical coordinates on shared borders, so bit
+    /// comparison — not float equality — is a safe and exact way to find them.
+    pub(crate) fn border_point_bits(&self, i: u32) -> (u32, u32) {
+        (self.line_positions[i as usize * 2].to_bits(), self.line_positions[i as usize * 2 + 1].to_bits())
+    }
+
     /// Border segments (index pairs into `line_positions`, for `LINES`) of the outline
     /// of the union of `ids`: segments shared by two selected provinces are left
     /// out, so only the outer edge of the whole group remains.
     pub fn boundary_indices(&self, ids: &[u32]) -> Vec<u32> {
         use std::collections::HashSet;
-        let point = |i: u32| (self.line_positions[i as usize * 2].to_bits(), self.line_positions[i as usize * 2 + 1].to_bits());
+        let point = |i: u32| self.border_point_bits(i);
         let mut segments: Vec<(u32, u32)> = Vec::new();
         let mut seen = HashSet::new();
         for &id in ids {

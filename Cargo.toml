@@ -1,6 +1,6 @@
 [workspace]
 resolver = "2"
-members = ["crates/maptool-core", "crates/maptool-cli", "crates/maptool-wasm", "crates/maptool-py"]
+members = ["crates/maptool-core", "crates/maptool-cli", "crates/maptool-wasm"]
 
 [profile.release]
 opt-level = 3

@@ -24,7 +24,6 @@ refresh rate with about 0.1 ms of CPU per frame.
 | `crates/maptool-core` | The algorithm. No I/O by default; `io` feature adds PNG/BMP decoding |
 | `crates/maptool-cli` | `maptool` command line tool |
 | `crates/maptool-wasm` | wasm-bindgen wrapper: SVG paths, or a mesh with zero-copy buffers and hit testing |
-| `crates/maptool-py` + `src/maptool` | Python package (pyo3, built with maturin) |
 | `web/` | Svelte + WebGL2 viewer with hover, click, pan and zoom |
 
 ## Usage
@@ -33,10 +32,6 @@ refresh rate with about 0.1 ms of CPU per frame.
 # CLI
 cargo run --release -p maptool-cli -- map.png -o map.svg
 cargo run --release -p maptool-cli -- --help
-
-# Python (inside the uv venv)
-maturin develop --release
-python -c "import maptool; m = maptool.vectorize_file('map.png'); print(m, m[0].path[:60])"
 
 # Browser viewer
 cd web && npm install && npm run wasm && npm run dev
@@ -112,5 +107,4 @@ disc of radius 20 grows by ~4% in area). Neighbours still tile exactly.
 
 ```sh
 cargo test --workspace
-cargo build --release -p maptool-cli && .venv/bin/python -m pytest tests
 ```

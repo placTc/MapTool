@@ -2,17 +2,15 @@
 
 Voronoi-style provinces with blocky border noise, plus a square enclave, a
 rectangular province and a multi-pixel exclave. Seeds are retried until the
-map validates (no single-pixel exclaves, no four-way junctions).
+map has no single-pixel exclaves and no four-way junctions.
 
-    .venv/bin/python examples/make_demo.py
+    python3 examples/make_demo.py
 """
 
 import random
 import struct
 import zlib
 from pathlib import Path
-
-import maptool
 
 W, H = 240, 160
 OUT = Path(__file__).parent / "demo.png"
@@ -65,17 +63,39 @@ def png(rows: list[list[tuple[int, int, int]]]) -> bytes:
     )
 
 
+def problems(rows: list[list[tuple[int, int, int]]]) -> list[str]:
+    """The two input rules: no lone pixel of a color that appears elsewhere, and no
+    corner where four different colors meet."""
+    found = []
+    counts: dict[tuple[int, int, int], int] = {}
+    for row in rows:
+        for px in row:
+            counts[px] = counts.get(px, 0) + 1
+    for y in range(H):
+        for x in range(W):
+            px = rows[y][x]
+            same = (
+                (x > 0 and rows[y][x - 1] == px)
+                or (x + 1 < W and rows[y][x + 1] == px)
+                or (y > 0 and rows[y - 1][x] == px)
+                or (y + 1 < H and rows[y + 1][x] == px)
+            )
+            if counts[px] > 1 and not same:
+                found.append(f"single-pixel exclave at ({x}, {y})")
+            if x > 0 and y > 0 and len({px, rows[y][x - 1], rows[y - 1][x], rows[y - 1][x - 1]}) == 4:
+                found.append(f"four-way junction at corner ({x}, {y})")
+    return found
+
+
 def main() -> None:
     for seed in range(1, 200):
         rows = build(seed)
-        data = bytes(c for row in rows for px in row for c in px)
-        try:
-            m = maptool.vectorize(data, W, H, channels=3)
-        except ValueError as e:
-            print(f"seed {seed}: {e}")
+        found = problems(rows)
+        if found:
+            print(f"seed {seed}: rejected, {len(found)} problem(s), e.g. {found[0]}")
             continue
         OUT.write_bytes(png(rows))
-        print(f"seed {seed}: {m} -> {OUT}")
+        print(f"seed {seed}: ok -> {OUT}")
         return
     raise SystemExit("no valid seed found")
 

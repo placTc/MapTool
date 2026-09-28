@@ -1,4 +1,4 @@
-import init, { Settings, biomeNames, openMap, type MapDocument } from 'maptool-wasm';
+import init, { Settings, biomeNames, filterFlags, openMap, type MapDocument } from 'maptool-wasm';
 
 export type { MapDocument };
 
@@ -52,4 +52,22 @@ export function unhex(css: string): number {
 /** True for a saved map (as opposed to a PNG/BMP): they start with "MTMP". */
 export function isMapFile(bytes: Uint8Array): boolean {
   return bytes.length >= 4 && bytes[0] === 0x4d && bytes[1] === 0x54 && bytes[2] === 0x4d && bytes[3] === 0x50;
+}
+
+/** What the map shows as single units: every province, states, countries or strategic regions. */
+export const LEVEL = { provinces: 0, states: 1, countries: 2, regions: 3 } as const;
+export type ViewKind = keyof typeof LEVEL;
+
+/** The two kinds of group of states. */
+export const GROUP = { country: 0, region: 1 } as const;
+
+let flags: { skipInStates: number; landOnly: number; seaOnly: number } | undefined;
+
+/** The bits for `provincesInRect` and `filterProvinces`. Needs WASM to be loaded. */
+export function filters() {
+  if (!flags) {
+    const [skipInStates, landOnly, seaOnly] = filterFlags();
+    flags = { skipInStates, landOnly, seaOnly };
+  }
+  return flags;
 }

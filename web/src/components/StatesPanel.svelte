@@ -18,7 +18,22 @@
     rev;
     return Array.from(doc.stateIds(), (id) => {
       const [provinces, land, sea, pixels, population, populated] = doc.stateStats(id);
-      return { id, name: doc.stateName(id), color: hex(doc.stateColor(id)), provinces, land, sea, pixels, population, populated };
+      const country = doc.groupOfState(0, id);
+      const region = doc.groupOfState(1, id);
+      return {
+        id,
+        name: doc.stateName(id),
+        color: hex(doc.stateColor(id)),
+        description: doc.stateDescription(id),
+        country: country >= 0 ? doc.groupName(0, country) : null,
+        region: region >= 0 ? doc.groupName(1, region) : null,
+        provinces,
+        land,
+        sea,
+        pixels,
+        population,
+        populated,
+      };
     });
   });
 
@@ -59,7 +74,15 @@
             </button>
           </div>
           {#if selected.has(s.id)}
+            <textarea
+              rows="2"
+              placeholder="Description"
+              value={s.description}
+              onchange={(e) => mutate(() => doc.setStateDescription(s.id, e.currentTarget.value))}
+            ></textarea>
             <dl>
+              <dt>Country</dt><dd>{s.country ?? 'none'}</dd>
+              <dt>Region</dt><dd>{s.region ?? 'none'}</dd>
               <dt>Provinces</dt><dd>{s.provinces} ({s.land} land, {s.sea} sea)</dd>
               <dt>Area</dt><dd>{s.pixels.toLocaleString()} px</dd>
               <dt>Population</dt><dd>{s.populated ? `${s.population.toLocaleString()} (set on ${s.populated})` : 'not set'}</dd>
@@ -138,6 +161,15 @@
     border-radius: 4px;
     padding: 3px 5px;
     font: inherit;
+  }
+  textarea {
+    background: #14161a;
+    color: inherit;
+    border: 1px solid #363b45;
+    border-radius: 4px;
+    padding: 4px 6px;
+    font: inherit;
+    resize: vertical;
   }
   .name:hover,
   .name:focus {

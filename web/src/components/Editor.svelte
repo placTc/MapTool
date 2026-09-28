@@ -1,7 +1,11 @@
 <script lang="ts">
   import { onMount } from 'svelte';
   import { MapRenderer, type Camera } from '../lib/gl';
-  import { biomeList, type MapDocument } from '../lib/map';
+  import { fileSafe } from '../lib/files';
+  import { biomeList, filters, LEVEL, type MapDocument, type ViewKind } from '../lib/map';
+  import BoxToolPanel from './BoxToolPanel.svelte';
+  import GroupsPanel from './GroupsPanel.svelte';
+  import SaveDialog from './SaveDialog.svelte';
   import SelectionPanel from './SelectionPanel.svelte';
   import StatesPanel from './StatesPanel.svelte';
 
@@ -10,28 +14,58 @@
     name: string;
     /** Load timing, and whether edits have been saved. */
     status: string;
-    /** Called after every change to states or province details, so the app can save them. */
+    /** Called after every change to the map's contents, so the app can save them. */
     onedit: () => void;
     /** Called once, when the map is first drawn, with a small preview image. */
     onready: (thumb: string) => void;
     onclose: () => void;
-    ondownload: () => void;
+    /** Save the map as a file with this name. */
+    ondownload: (filename: string) => void;
   }
   let { doc, name, status, onedit, onready, onclose, ondownload }: Props = $props();
 
   const biomes = biomeList();
+  const F = filters();
   const MAX_K = 30;
 
-  // ---- What is shown and selected
+  // ---- What is shown
   /** Bumped after every edit; anything read from the document depends on it. */
   let rev = $state(0);
-  let viewKind = $state<'provinces' | 'states'>('provinces');
-  /** How the province view is colored: 0 source colors, 1 by state, 2 by type, 3 by biome. */
+  let viewKind = $state<ViewKind>('provinces');
+  const level = $derived(LEVEL[viewKind]);
+  /** How the province view is colored: 0 source colors, 1 state, 2 land/sea, 3 biome, 4 country, 5 strategic region. */
   let colorBy = $state(0);
-  let selection = $state.raw(new Set<number>());
-  let selectedStates = $state.raw(new Set<number>());
+
+  // ---- What is selected: provinces, and the groups (states, countries, regions) picked as a whole
+  interface Selection {
+    provinces: Set<number>;
+    states: Set<number>;
+    countries: Set<number>;
+    regions: Set<number>;
+  }
+  /** In the order of the unit kinds the document uses: 0 province, 1 state, 2 country, 3 region. */
+  const KINDS = ['provinces', 'states', 'countries', 'regions'] as const;
+  const emptySelection = (): Selection => ({ provinces: new Set(), states: new Set(), countries: new Set(), regions: new Set() });
+  let sel = $state.raw<Selection>(emptySelection());
+
   let hoverProvince = $state<number | null>(null);
   let toast = $state('');
+  let toastTimer: ReturnType<typeof setTimeout> | undefined;
+  let saving = $state(false);
+  let lastFileName = '';
+
+  // ---- The box tool
+  let tool = $state<'pan' | 'box'>('pan');
+  let boxMode = $state<'replace' | 'add' | 'remove'>('replace');
+  let boxWhole = $state(false);
+  let boxTypes = $state<'all' | 'land' | 'sea'>('all');
+  let boxSkipInStates = $state(false);
+  /** The box being dragged, in stage pixels. */
+  let marquee = $state<{ x: number; y: number; w: number; h: number } | null>(null);
+  /** The provinces the box would select right now, shown while dragging. */
+  let preview = $state.raw<number[] | null>(null);
+  let previewKey = $state(0);
+
   /** The result of the last CSV import, shown until dismissed. */
   let csvReport = $state<{
     file: string;
@@ -45,7 +79,6 @@
     problemCount: number;
     problems: string[];
   } | null>(null);
-  let toastTimer: ReturnType<typeof setTimeout> | undefined;
 
   function showError(e: unknown) {
     toast = e instanceof Error ? e.message : String(e);
@@ -66,33 +99,39 @@
     }
   }
 
-  /** Provinces that are selected, directly or through a selected state. */
+  /** The selection as `[kind, id, kind, id, ...]`, the form the document takes units in. */
+  function selectionUnits(s: Selection): Uint32Array {
+    const pairs: number[] = [];
+    KINDS.forEach((key, kind) => s[key].forEach((id) => pairs.push(kind, id)));
+    return Uint32Array.from(pairs);
+  }
+
+  /** Every province that is selected, directly or through a selected state, country or region. */
   const highlighted = $derived.by(() => {
     rev;
-    const out = new Set(selection);
-    for (const s of selectedStates) {
-      try {
-        for (const p of doc.stateProvinces(s)) out.add(p);
-      } catch {
-        // The state was deleted; the selection is cleaned up by whoever deleted it.
-      }
-    }
-    return out;
+    return new Set<number>(doc.provincesOfUnits(selectionUnits(sel)));
   });
 
-  /** What lights up under the pointer: the province, or in the state view its whole state. */
-  const hovered = $derived.by(() => {
+  const hoveredGroup = $derived.by(() => {
     rev;
-    if (hoverProvince === null) return [] as number[];
-    return viewKind === 'states' ? Array.from(doc.groupProvinces(hoverProvince)) : [hoverProvince];
+    return hoverProvince === null ? ([] as number[]) : Array.from(doc.groupProvinces(hoverProvince, level));
   });
-  const hoverKey = $derived(hovered.length === 0 ? '' : viewKind === 'states' ? `g${hovered[0]}:${hovered.length}` : `p${hovered[0]}`);
+  /** What lights up: the box's preview while one is being dragged, else what is under the pointer. */
+  const hovered = $derived(preview ?? hoveredGroup);
+  const hoverKey = $derived(
+    preview ? `box${previewKey}` : hoveredGroup.length === 0 ? '' : level === 0 ? `p${hoveredGroup[0]}` : `g${hoveredGroup[0]}:${hoveredGroup.length}`,
+  );
+
+  const UNIT_LABELS = ['province', 'state', 'country', 'strategic region'];
 
   const hoverInfo = $derived.by(() => {
     rev;
     const p = hoverProvince;
     if (p === null) return null;
+    const [kind, id] = doc.unitsOf(Uint32Array.of(p), level);
     const s = doc.stateOf(p);
+    const c = s >= 0 ? doc.groupOfState(0, s) : -1;
+    const unitName = kind === 1 ? doc.stateName(id) : kind === 2 ? doc.groupName(0, id) : kind === 3 ? doc.groupName(1, id) : null;
     return {
       id: p,
       number: doc.provinceNumber(p),
@@ -101,6 +140,9 @@
       biome: biomes[doc.provinceBiome(p)],
       population: doc.provincePopulation(p),
       state: s >= 0 ? doc.stateName(s) : null,
+      country: c >= 0 ? doc.groupName(0, c) : null,
+      unitName,
+      unitLabel: UNIT_LABELS[kind],
     };
   });
 
@@ -112,7 +154,6 @@
 
   // ---- Drawing
   let canvasEl = $state<HTMLCanvasElement>();
-  let stageEl = $state<HTMLElement>();
   let cw = $state(0);
   let ch = $state(0);
   let ready = $state(false);
@@ -127,7 +168,7 @@
     drawQueued = true;
     requestAnimationFrame(() => {
       drawQueued = false;
-      renderer?.draw(cam, { stateView: viewKind === 'states' });
+      renderer?.draw(cam, { stateView: level > 0 });
     });
   }
 
@@ -167,13 +208,14 @@
   $effect(() => {
     if (!ready) return;
     rev;
-    renderer!.setPalette(doc.palette(viewKind === 'states' ? 1 : colorBy, Uint32Array.from(highlighted), Uint32Array.from(hovered)));
+    const mode = viewKind === 'provinces' ? colorBy : ([0, 1, 4, 5] as const)[level];
+    renderer!.setPalette(doc.palette(mode, Uint32Array.from(highlighted), Uint32Array.from(hovered)));
     requestDraw();
   });
   $effect(() => {
     if (!ready) return;
     rev;
-    renderer!.setStateBorders(viewKind === 'states' ? doc.stateBorderIndices() : null);
+    renderer!.setStateBorders(level > 0 ? doc.borderIndices(level) : null);
     requestDraw();
   });
   $effect(() => {
@@ -191,71 +233,114 @@
   });
 
   // ---- Selecting
-  const toggled = (set: Set<number>, id: number) => {
-    const next = new Set(set);
-    if (!next.delete(id)) next.add(id);
-    return next;
-  };
-
-  function clearSelection() {
-    selection = new Set();
-    selectedStates = new Set();
+  /** Change the selection by some units (`[kind, id, ...]`): replace it, add to it, take from it, or flip them. */
+  function applyUnits(units: ArrayLike<number>, how: 'replace' | 'add' | 'remove' | 'toggle') {
+    const next: Selection =
+      how === 'replace'
+        ? emptySelection()
+        : { provinces: new Set(sel.provinces), states: new Set(sel.states), countries: new Set(sel.countries), regions: new Set(sel.regions) };
+    for (let i = 0; i < units.length; i += 2) {
+      const set = next[KINDS[units[i]]];
+      const id = units[i + 1];
+      if (how === 'remove') set.delete(id);
+      else if (how === 'toggle') set.has(id) ? set.delete(id) : set.add(id);
+      else set.add(id);
+    }
+    sel = next;
   }
 
-  /** A click on province `p` (or empty space when null). Ctrl, cmd or shift adds to the selection. */
-  function select(p: number | null, add: boolean) {
+  const clearSelection = () => (sel = emptySelection());
+  const selectedCount = $derived(sel.provinces.size + sel.states.size + sel.countries.size + sel.regions.size);
+
+  /** A click on province `p` (or empty space when null). Ctrl, cmd or shift flips it in the selection. */
+  function select(p: number | null, flip: boolean) {
     if (p === null) {
-      if (!add) clearSelection();
+      if (!flip) clearSelection();
       return;
     }
-    const state = viewKind === 'states' ? doc.stateOf(p) : -1;
-    if (state >= 0) {
-      // State view: a state is picked as a whole.
-      selectedStates = add ? toggled(selectedStates, state) : new Set([state]);
-      if (!add) selection = new Set();
-    } else {
-      selection = add ? toggled(selection, p) : new Set([p]);
-      if (!add) selectedStates = new Set();
-    }
+    applyUnits(doc.unitsOf(Uint32Array.of(p), level), flip ? 'toggle' : 'replace');
   }
 
-  function selectState(id: number, add: boolean) {
-    selectedStates = add ? toggled(selectedStates, id) : new Set([id]);
-    if (!add) selection = new Set();
-  }
+  /** Pick a state, country or region from its panel. */
+  const selectGroup = (kind: number, id: number, flip: boolean) => applyUnits([kind, id], flip ? 'toggle' : 'replace');
 
   function deleteState(id: number) {
-    selectedStates = new Set([...selectedStates].filter((s) => s !== id));
+    sel = { ...sel, states: new Set([...sel.states].filter((s) => s !== id)) };
     mutate(() => doc.deleteState(id));
   }
 
-  function stateCreated(id: number) {
-    selection = new Set();
-    selectedStates = new Set([id]);
+  function deleteGroup(kind: number, id: number) {
+    const key = KINDS[kind + 2];
+    sel = { ...sel, [key]: new Set([...sel[key]].filter((g) => g !== id)) };
+    mutate(() => doc.deleteGroup(kind, id));
   }
 
-  function setView(kind: 'provinces' | 'states') {
+  function setView(kind: ViewKind) {
     if (kind === viewKind) return;
     viewKind = kind;
     clearSelection();
+    preview = marquee = null;
   }
 
-  // ---- Pointer: hover, click to select, drag to pan, wheel to zoom
-  function pickAt(clientX: number, clientY: number): number | null {
+  // ---- Box selection tools
+  const boxFlags = () => (boxSkipInStates ? F.skipInStates : 0) | (boxTypes === 'land' ? F.landOnly : 0) | (boxTypes === 'sea' ? F.seaOnly : 0);
+
+  /** The box in image pixels, from two screen corners. */
+  function boxProvinces(ax: number, ay: number, bx: number, by: number): number[] {
+    const [x0, y0] = toImage(ax, ay);
+    const [x1, y1] = toImage(bx, by);
+    return Array.from(doc.provincesInRect(x0, y0, x1, y1, boxWhole, boxFlags()));
+  }
+
+  function applyBox(provinces: number[], e: PointerEvent) {
+    // The modifier wins over the mode, so a box can add or remove without changing it.
+    const how = e.shiftKey ? 'add' : e.altKey ? 'remove' : boxMode;
+    applyUnits(doc.unitsOf(Uint32Array.from(provinces), level), how);
+  }
+
+  /** Provinces in the selection that are not in any state are kept; the rest are let go. */
+  function deselectProvincesInStates() {
+    const kept = doc.filterProvinces(Uint32Array.from(sel.provinces), F.skipInStates);
+    // A selected state, country or region is made of provinces that are in states.
+    sel = { ...emptySelection(), provinces: new Set(kept) };
+  }
+
+  function selectUnassigned() {
+    sel = { ...emptySelection(), provinces: new Set(doc.unassignedProvinces()) };
+  }
+
+  function invertSelection() {
+    const chosen = highlighted;
+    const rest: number[] = [];
+    for (let p = 0; p < doc.len; p++) if (!chosen.has(p)) rest.push(p);
+    sel = { ...emptySelection(), provinces: new Set(rest) };
+  }
+
+  // ---- Pointer: hover, click to select, drag to pan or to draw a box, wheel to zoom
+  const toImage = (clientX: number, clientY: number): [number, number] => {
     const r = canvasEl!.getBoundingClientRect();
-    const id = doc.pick(cam.x + (clientX - r.left) / cam.k, cam.y + (clientY - r.top) / cam.k);
+    return [cam.x + (clientX - r.left) / cam.k, cam.y + (clientY - r.top) / cam.k];
+  };
+
+  function pickAt(clientX: number, clientY: number): number | null {
+    const [x, y] = toImage(clientX, clientY);
+    const id = doc.pick(x, y);
     return id < 0 ? null : id;
   }
 
-  let drag: { x: number; y: number; cam: Camera; moved: boolean } | null = null;
+  type Drag = { kind: 'pan'; x: number; y: number; cam: Camera; moved: boolean } | { kind: 'box'; x: number; y: number; moved: boolean };
+  let drag: Drag | null = null;
+  let spaceDown = false;
 
   function onPointerDown(e: PointerEvent) {
+    if (e.button === 2) return;
     try {
       canvasEl!.setPointerCapture(e.pointerId);
     } catch {
       // The pointer is already gone; dragging still works without capture.
     }
-    drag = { x: e.clientX, y: e.clientY, cam, moved: false };
+    const pan = tool === 'pan' || e.button === 1 || spaceDown;
+    drag = pan ? { kind: 'pan', x: e.clientX, y: e.clientY, cam, moved: false } : { kind: 'box', x: e.clientX, y: e.clientY, moved: false };
   }
 
   function onPointerMove(e: PointerEvent) {
@@ -267,14 +352,28 @@
     const dy = e.clientY - drag.y;
     if (!drag.moved && Math.hypot(dx, dy) < 4) return;
     drag.moved = true;
-    cam = { x: drag.cam.x - dx / drag.cam.k, y: drag.cam.y - dy / drag.cam.k, k: drag.cam.k };
-    requestDraw();
+    if (drag.kind === 'pan') {
+      cam = { x: drag.cam.x - dx / drag.cam.k, y: drag.cam.y - dy / drag.cam.k, k: drag.cam.k };
+      requestDraw();
+    } else {
+      const r = canvasEl!.getBoundingClientRect();
+      marquee = { x: Math.min(drag.x, e.clientX) - r.left, y: Math.min(drag.y, e.clientY) - r.top, w: Math.abs(dx), h: Math.abs(dy) };
+      // Show what the box would select as it is dragged.
+      preview = doc.provincesOfUnits(doc.unitsOf(Uint32Array.from(boxProvinces(drag.x, drag.y, e.clientX, e.clientY)), level)) as unknown as number[];
+      previewKey++;
+    }
   }
 
   function onPointerUp(e: PointerEvent) {
-    const wasClick = drag && !drag.moved;
+    const d = drag;
     drag = null;
-    if (wasClick) select(pickAt(e.clientX, e.clientY), e.ctrlKey || e.metaKey || e.shiftKey);
+    if (!d) return;
+    if (d.kind === 'box' && d.moved) {
+      applyBox(boxProvinces(d.x, d.y, e.clientX, e.clientY), e);
+      marquee = preview = null;
+    } else if (!d.moved) {
+      select(pickAt(e.clientX, e.clientY), e.ctrlKey || e.metaKey || e.shiftKey);
+    }
   }
 
   /** Wheel delta in pixels. Browsers report lines (Firefox mouse wheels) or pages too. */
@@ -327,6 +426,30 @@
     requestDraw();
   }
 
+  const typing = (e: KeyboardEvent) => e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
+
+  function onKeyDown(e: KeyboardEvent) {
+    if (typing(e) || e.ctrlKey || e.metaKey) return;
+    if (e.key === 'Escape') {
+      // Escape drops a box being drawn first, and only then the selection.
+      if (drag?.kind === 'box') {
+        drag = null;
+        marquee = preview = null;
+      } else {
+        clearSelection();
+      }
+    } else if (e.key === 'b' || e.key === 'B') {
+      tool = tool === 'box' ? 'pan' : 'box';
+    } else if (e.key === ' ') {
+      spaceDown = true;
+      e.preventDefault();
+    }
+  }
+
+  function onKeyUp(e: KeyboardEvent) {
+    if (e.key === ' ') spaceDown = false;
+  }
+
   async function importCsv(file: File) {
     let text: string;
     try {
@@ -359,15 +482,17 @@
     if (f) importCsv(f);
   }
 
-  function onKey(e: KeyboardEvent) {
-    const typing = e.target instanceof HTMLElement && ['INPUT', 'TEXTAREA', 'SELECT'].includes(e.target.tagName);
-    if (e.key === 'Escape' && !typing) clearSelection();
+  function save(filename: string) {
+    saving = false;
+    lastFileName = filename.replace(/\.maptool$/i, '');
+    ondownload(filename);
   }
 
-  const selectedList = $derived(Array.from(selection));
+  const defaultFileName = () => lastFileName || fileSafe(mapName || name) || 'map';
+  const selectedProvinceList = $derived(Array.from(sel.provinces));
 </script>
 
-<svelte:window onkeydown={onKey} />
+<svelte:window onkeydown={onKeyDown} onkeyup={onKeyUp} />
 
 <div class="editor">
   <header>
@@ -387,6 +512,8 @@
     <div class="seg" role="group" aria-label="View">
       <button class:on={viewKind === 'provinces'} onclick={() => setView('provinces')}>Provinces</button>
       <button class:on={viewKind === 'states'} onclick={() => setView('states')}>States</button>
+      <button class:on={viewKind === 'countries'} onclick={() => setView('countries')}>Countries</button>
+      <button class:on={viewKind === 'regions'} onclick={() => setView('regions')}>Regions</button>
     </div>
 
     {#if viewKind === 'provinces'}
@@ -395,11 +522,18 @@
         <select bind:value={colorBy}>
           <option value={0}>Source colors</option>
           <option value={1}>State</option>
+          <option value={4}>Country</option>
+          <option value={5}>Strategic region</option>
           <option value={2}>Land / sea</option>
           <option value={3}>Biome</option>
         </select>
       </label>
     {/if}
+
+    <div class="seg" role="group" aria-label="Tool">
+      <button class:on={tool === 'pan'} onclick={() => (tool = 'pan')} title="Drag to pan">Pan</button>
+      <button class:on={tool === 'box'} onclick={() => (tool = 'box')} title="Drag a box to select (B)">Box select</button>
+    </div>
 
     <button class="secondary" onclick={fit}>Fit</button>
     <button class="secondary" onclick={() => zoomToProvinces(highlighted)} disabled={highlighted.size === 0}>Zoom to selection</button>
@@ -407,39 +541,44 @@
       Import CSV
       <input type="file" accept=".csv,.tsv,.txt,text/csv,text/plain" onchange={csvPicked} hidden />
     </label>
-    <button class="secondary" onclick={ondownload} title="Save the map, with its states and province details, as a file">Download map</button>
+    <button class="secondary" onclick={() => (saving = true)} title="Save the map, with everything you have added, as a file">Save as…</button>
     <span class="status">{status}</span>
   </header>
 
   <div class="body">
-    <section class="stage" bind:this={stageEl} bind:clientWidth={cw} bind:clientHeight={ch}>
+    <section class="stage" bind:clientWidth={cw} bind:clientHeight={ch}>
       <canvas
         bind:this={canvasEl}
+        class:boxing={tool === 'box'}
         use:wheelAction
         onpointerdown={onPointerDown}
         onpointermove={onPointerMove}
         onpointerup={onPointerUp}
         onpointerleave={() => (hoverProvince = null)}
+        oncontextmenu={(e) => e.preventDefault()}
       ></canvas>
+
+      {#if marquee}
+        <div class="marquee" style:left="{marquee.x}px" style:top="{marquee.y}px" style:width="{marquee.w}px" style:height="{marquee.h}px"></div>
+      {/if}
 
       {#if hoverInfo}
         <div class="tip">
-          {#if viewKind === 'states' && hoverInfo.state}
-            <strong>{hoverInfo.state}</strong>
-            <span>state · via province {hoverInfo.name}</span>
+          {#if level > 0 && hoverInfo.unitName}
+            <strong>{hoverInfo.unitName}</strong>
+            <span>{hoverInfo.unitLabel} · via province {hoverInfo.name}</span>
           {:else}
             <strong>{hoverInfo.name}</strong>
             <span>
               #{hoverInfo.number} · {hoverInfo.sea ? 'sea' : `land, ${hoverInfo.biome.toLowerCase()}`}{hoverInfo.population !== undefined
                 ? ` · pop. ${hoverInfo.population.toLocaleString()}`
-                : ''}{hoverInfo.state ? ` · ${hoverInfo.state}` : ''}
+                : ''}{hoverInfo.state ? ` · ${hoverInfo.state}` : ''}{hoverInfo.country ? ` · ${hoverInfo.country}` : ''}
             </span>
           {/if}
         </div>
       {/if}
 
       {#if toast}<div class="toast" role="alert">{toast}</div>{/if}
-
       {#if csvReport}
         <div class="report" role="dialog" aria-label="CSV import result">
           <h3>Imported {csvReport.file}</h3>
@@ -466,17 +605,80 @@
     </section>
 
     <aside>
-      {#if selectedList.length > 0}
-        <SelectionPanel {doc} {rev} ids={selectedList} {mutate} onclear={() => (selection = new Set())} oncreated={stateCreated} />
-      {:else if selectedStates.size === 0}
+      {#if tool === 'box'}
+        <BoxToolPanel
+          bind:mode={boxMode}
+          bind:whole={boxWhole}
+          bind:types={boxTypes}
+          bind:skipInStates={boxSkipInStates}
+          hasSelection={selectedCount > 0}
+          ondeselectinstates={deselectProvincesInStates}
+          onselectunassigned={selectUnassigned}
+          oninvert={invertSelection}
+          onclear={clearSelection}
+        />
+      {/if}
+
+      {#if selectedProvinceList.length > 0}
+        <SelectionPanel
+          {doc}
+          {rev}
+          ids={selectedProvinceList}
+          {mutate}
+          onclear={() => (sel = { ...sel, provinces: new Set() })}
+          oncreated={(id) => applyUnits([1, id], 'replace')}
+        />
+      {:else if selectedCount === 0 && tool !== 'box'}
         <p class="hint">
-          Click a province to select it; ctrl-click (or shift-click) adds more. Drag to pan, wheel to zoom, Esc clears.
+          Click a province to select it; ctrl-click (or shift-click) adds more. Drag to pan, wheel to zoom, Esc clears, B for box select.
+          Switch to States, Countries or Regions to work with whole groups.
         </p>
       {/if}
-      <StatesPanel {doc} {rev} selected={selectedStates} onselect={selectState} ondelete={deleteState} onzoom={zoomToProvinces} {mutate} />
+
+      <StatesPanel
+        {doc}
+        {rev}
+        selected={sel.states}
+        onselect={(id, flip) => selectGroup(1, id, flip)}
+        ondelete={deleteState}
+        onzoom={zoomToProvinces}
+        {mutate}
+      />
+      <GroupsPanel
+        {doc}
+        {rev}
+        kind={0}
+        title="Countries"
+        noun="country"
+        selected={sel.countries}
+        selectedStates={sel.states}
+        onselect={(id, flip) => selectGroup(2, id, flip)}
+        ondelete={(id) => deleteGroup(0, id)}
+        onzoom={zoomToProvinces}
+        oncreated={(id) => applyUnits([2, id], 'replace')}
+        {mutate}
+      />
+      <GroupsPanel
+        {doc}
+        {rev}
+        kind={1}
+        title="Strategic regions"
+        noun="strategic region"
+        selected={sel.regions}
+        selectedStates={sel.states}
+        onselect={(id, flip) => selectGroup(3, id, flip)}
+        ondelete={(id) => deleteGroup(1, id)}
+        onzoom={zoomToProvinces}
+        oncreated={(id) => applyUnits([3, id], 'replace')}
+        {mutate}
+      />
     </aside>
   </div>
 </div>
+
+{#if saving}
+  <SaveDialog initial={defaultFileName()} onsave={save} oncancel={() => (saving = false)} />
+{/if}
 
 <style>
   .editor {
@@ -587,6 +789,15 @@
     cursor: crosshair;
     touch-action: none;
     user-select: none;
+  }
+  canvas.boxing {
+    cursor: cell;
+  }
+  .marquee {
+    position: absolute;
+    border: 1px dashed #ffd400;
+    background: rgba(255, 212, 0, 0.12);
+    pointer-events: none;
   }
   .tip {
     position: absolute;

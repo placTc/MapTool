@@ -2,6 +2,7 @@
   import { onMount, tick } from 'svelte';
   import Editor from './components/Editor.svelte';
   import StartScreen from './components/StartScreen.svelte';
+  import { fileSafe, stemOf } from './lib/files';
   import { isMapFile, loadTimings, openMapBytes, type MapDocument } from './lib/map';
   import * as store from './lib/storage';
 
@@ -67,9 +68,8 @@
 
   // ---- Opening
   const yieldToPaint = () => new Promise((r) => setTimeout(r));
-  const nameOf = (file: string) => file.replace(/\.[^.]+$/, '') || 'Map';
-  /** A name that is safe to use as a file name. */
-  const fileSafe = (name: string) => name.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '_').trim() || 'Map';
+  const nameOf = (file: string) => stemOf(file) || 'Map';
+  const safeName = (name: string) => fileSafe(name) || 'Map';
 
   /** Swap in a new document, saving and releasing the one that was open. */
   async function show(next: MapDocument, name: string, id: string) {
@@ -227,8 +227,9 @@
     setTimeout(() => URL.revokeObjectURL(url), 10_000);
   }
 
-  function downloadCurrent() {
-    if (doc) saveFile(doc.toBytes(), `${fileSafe(doc.mapName || mapName)}.maptool`);
+  /** Save the open map, with the file name the user chose in the Save as dialog. */
+  function downloadCurrent(filename: string) {
+    if (doc) saveFile(doc.toBytes(), filename);
   }
 
   async function downloadRecent(id: string) {
@@ -239,7 +240,7 @@
       const d = await openMapBytes(saved.file, { tolerance, validate });
       try {
         if (saved.edits) d.setEditsBytes(saved.edits);
-        saveFile(d.toBytes(), `${fileSafe(d.mapName || saved.meta.name)}.maptool`);
+        saveFile(d.toBytes(), `${safeName(d.mapName || saved.meta.name)}.maptool`);
       } finally {
         d.free();
       }

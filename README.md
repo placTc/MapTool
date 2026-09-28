@@ -53,12 +53,24 @@ browser's color pipeline, so province colors are exact.
 **Start screen.** Open a PNG/BMP (or a saved `.maptool` file), or pick a recent map.
 The smoothing and validation settings live here and apply to newly built maps.
 
-**Editing.** Click a province to select it; ctrl/cmd/shift-click adds or removes
-provinces; drag pans, the wheel zooms, Esc clears the selection.
+**Editing.** Click a province to select it; ctrl/cmd/shift-click adds or removes provinces;
+the wheel zooms, Esc clears the selection.
 
-- *States* are named, colored groups of provinces. Create one from the selection, add
-  the selection to an existing state, rename or recolor it, or delete it. A province is in
-  at most one state: putting it in another moves it.
+- *Box selection* (the **Box select** tool, or press `B`): drag a rectangle over the map. In
+  the sidebar, choose what dropping the box does (replace the selection, add to it, or
+  deselect what it covers; Shift adds and Alt removes whatever the mode is), whether it takes
+  provinces it touches or only those fully inside it, land and/or sea only, and whether to
+  skip provinces already in a state. The provinces a box would take light up while you drag.
+  Buttons deselect provinces already in states, select every unassigned province, or invert
+  the selection. Pan with middle-drag or Space held, or switch back to the **Pan** tool.
+- *States* are named, colored groups of provinces, with an optional description. Create one
+  from the selection, add the selection to an existing state, rename, recolor or delete it.
+  A province is in at most one state: putting it in another moves it.
+- *Countries* and *strategic regions* are groups of **states**, with a name, color and
+  description. Select states (in the States view, from the states list, or with a box), then
+  create a country or region from them or add them to an existing one. A state is in at most
+  one country and at most one region, and the two are independent. Deleting a state removes
+  it from both.
 - *Province details*: name (blank shows the province number), description, land or sea,
   biome, and population. Type and biome can be set on many provinces at once. A sea
   province's biome is always **Sea** and is locked; making it land again brings back the
@@ -67,10 +79,12 @@ provinces; drag pans, the wheel zooms, Esc clears the selection.
   (in the recent list, in autosave, and inside downloaded files), so it no longer depends on
   what the image file was called.
 - *Import CSV*: gives each province its type and its own ID by hex color (see below).
-- *Views*: **Provinces** shows every province and can color by source colors, state,
-  land/sea, or biome. **States** shows states instead of provinces: borders inside a
-  state disappear, hovering or clicking anywhere on a state picks the whole state, and
-  provinces in no state stay separate (dimmed).
+- *Views*: **Provinces** shows every province and can color by source colors, state, country,
+  strategic region, land/sea, or biome. **States**, **Countries** and **Regions** show those
+  groups instead of provinces: borders inside a group disappear, hovering or clicking anywhere
+  on a group picks all of it, and where a province has no group at that level it falls back to
+  its state and then to itself (dimmed). The sidebar shows province counts, area and
+  population for what is selected.
 
 **Import CSV.** Load a CSV whose rows give a hex color, a province type (`land` or `sea`),
 and the province's own ID (a whole number). Rows are matched to provinces by the color in the
@@ -88,11 +102,11 @@ name when it has none.
 - A file with separate red, green and blue columns (such as a Clausewitz `definition.csv`) is
   not read directly; it needs a single hex color column.
 
-**Saving.** Opened maps are kept in this browser's IndexedDB (localStorage is limited to
+**Saving.** **Save as…** asks for a file name and writes a `.maptool` file (your browser puts it
+in its download folder, unless it is set to ask where). Opened maps are also kept in this browser's IndexedDB (localStorage is limited to
 a few MB of text and cannot hold them), as the finished geometry, so reopening a recent
 map takes about a tenth of a second instead of rebuilding it. Your states and province
-details are autosaved separately, a few KB per edit. At most 10 maps are kept. **Download
-map** writes a `.maptool` file with the geometry and all your edits; open it again from the
+details are autosaved separately, a few KB per edit. At most 10 maps are kept. A `.maptool` file has the geometry and all your edits; open it again from the
 start screen (or drop it on the page) to continue on another machine. Opening the same
 image again finds its saved copy, edits included.
 

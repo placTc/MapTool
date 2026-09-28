@@ -5,15 +5,21 @@
 //! overlaps between them.
 
 mod build;
+mod document;
 mod label;
 mod mesh;
+mod provinces;
 mod smooth;
+mod states;
 mod trace;
 mod validate;
 
 use std::fmt::{self, Write};
 
+pub use document::{Document, StateStats, ViewMode, biome_names, is_map_file};
 pub use mesh::{MapMesh, ProvinceInfo};
+pub use provinces::{Biome, Kind, ProvinceMeta, ProvinceTable};
+pub use states::{State, StateSet, auto_color};
 
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub enum PixelFormat {
@@ -71,6 +77,10 @@ pub enum Error {
     TooLarge,
     /// The image breaks an input rule; see [`Violation`].
     Invalid { violations: Vec<Violation>, total: usize },
+    /// A saved map file is damaged, truncated or from an incompatible version.
+    Format(String),
+    /// An edit was refused (unknown state or province).
+    Edit(String),
     /// The triangulation of a province failed (degenerate geometry).
     Tessellation { province: u32, message: String },
     #[cfg(feature = "io")]
@@ -121,6 +131,8 @@ impl fmt::Display for Error {
                 }
                 Ok(())
             }
+            Error::Format(why) => write!(f, "invalid map file: {why}"),
+            Error::Edit(why) => write!(f, "{why}"),
             Error::Tessellation { province, message } => {
                 write!(f, "cannot triangulate province {province}: {message}")
             }

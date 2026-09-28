@@ -2,7 +2,7 @@
 //! `cargo run --release -p maptool-core --example bench -- [width height cell]`
 use std::time::Instant;
 
-use maptool_core::{Options, PixelFormat, mesh, vectorize};
+use maptool_core::{Document, Options, PixelFormat, mesh, vectorize};
 
 fn hash(a: u64, b: u64) -> u64 {
     let mut x = a.wrapping_mul(0x9E3779B97F4A7C15) ^ b.wrapping_mul(0xC2B2AE3D27D4EB4F);
@@ -66,6 +66,29 @@ fn main() {
             t.elapsed()
         );
     }
+
+    // Saving and reopening a map.
+    let m = mesh(&px, w, h, PixelFormat::Rgb, &lax(Options::default()), 0.03).unwrap();
+    let t = Instant::now();
+    let mut doc = Document::new(m);
+    eprintln!("document (segment neighbours): {:.2?}", t.elapsed());
+    let all: Vec<u32> = (0..doc.mesh.provinces.len() as u32 / 2).collect();
+    doc.states.create("Half", &all).unwrap();
+    let t = Instant::now();
+    let bytes = doc.to_bytes();
+    let save = t.elapsed();
+    let t = Instant::now();
+    let back = Document::from_bytes(&bytes).unwrap();
+    let load = t.elapsed();
+    assert!(back == doc);
+    let raw = (doc.mesh.positions.len() + doc.mesh.indices.len() + doc.mesh.line_positions.len() + doc.mesh.vertex_province.len() + doc.mesh.line_indices.len()) * 4;
+    eprintln!("save: {:.1} MB (raw mesh {:.1} MB) in {save:.2?}; reopen in {load:.2?}", bytes.len() as f64 / 1e6, raw as f64 / 1e6);
+    let t = Instant::now();
+    let n = doc.state_border_indices().len();
+    eprintln!("state-view borders: {} segments in {:.2?}", n / 2, t.elapsed());
+    let t = Instant::now();
+    let _ = doc.palette(maptool_core::ViewMode::States, &[1, 2, 3], &[4]);
+    eprintln!("palette: {:.2?}", t.elapsed());
 
     // Label map + validation scan only; this map is expected to be rejected.
     let t = Instant::now();

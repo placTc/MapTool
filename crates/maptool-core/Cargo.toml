@@ -12,4 +12,5 @@ io = ["dep:image"]
 
 [dependencies]
 lyon_tessellation = "1"
+miniz_oxide = "0.8"
 image = { version = "0.25", default-features = false, features = ["png", "bmp"], optional = true }

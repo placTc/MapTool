@@ -90,7 +90,7 @@ pub enum Error {
     Edit(String),
     /// The triangulation of a province failed (degenerate geometry).
     Tessellation { province: u32, message: String },
-    /// A border-map pixel, for [`generate_labels`], is not white, `#00FF00` or black.
+    /// A border-map pixel, for [`generate_labels`], is not white, `#0000FF` or black.
     InvalidBorderColor { x: u32, y: u32, color: [u8; 3] },
     #[cfg(feature = "io")]
     Image(String),
@@ -300,7 +300,7 @@ pub struct GeneratedMesh {
 }
 
 /// Generate a province mesh from a hand-painted border map: white pixels are
-/// land, `#00FF00` pixels are sea/lake, black pixels are a border line
+/// land, `#0000FF` pixels are sea/lake, black pixels are a border line
 /// absorbed into whichever province is nearest. See the `generate` module
 /// for the full color contract and algorithm. `mesh_opts`/`flatten_tolerance`
 /// control smoothing/validation exactly like [`mesh`].

@@ -43,7 +43,7 @@ impl GenerateSettings {
     }
 }
 
-/// Generate province geometry from a hand-painted border map (white = land, `#00FF00`
+/// Generate province geometry from a hand-painted border map (white = land, `#0000FF`
 /// = sea/lake, black = a border line absorbed into whichever province is nearest),
 /// and wrap it in a fresh document with sea/lake provinces already marked as sea.
 #[wasm_bindgen(js_name = generateMap)]

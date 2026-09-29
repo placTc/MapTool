@@ -45,7 +45,7 @@
     <form onsubmit={submit}>
       <h3>Generate from a border map</h3>
       <p class="hint">
-        A PNG or BMP with white for land, green (#00FF00) for sea or lakes, and black for a border line to respect
+        A PNG or BMP with white for land, blue (#0000FF) for sea or lakes, and black for a border line to respect
         (its meaning is decided later, in the editor).
       </p>
       <label>

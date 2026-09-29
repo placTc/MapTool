@@ -1,5 +1,5 @@
 //! Generate a province map from a hand-painted "border map": white pixels are
-//! land, `#00FF00` pixels are sea/lake, black pixels are a border line to
+//! land, `#0000FF` pixels are sea/lake, black pixels are a border line to
 //! respect now and interpret later (country/subdivision/natural — the color
 //! alone doesn't say which). Land and, optionally, sea/lake are carved into
 //! province-sized blobs; black pixels are absorbed into whichever province
@@ -77,7 +77,7 @@ enum Terrain {
 
 /// Classify every pixel as land, sea/lake or a border line. Alpha is ignored
 /// even for [`PixelFormat::Rgba`] — border maps aren't expected to carry
-/// transparency. Any color other than white, `#00FF00` or black is a hard
+/// transparency. Any color other than white, `#0000FF` or black is a hard
 /// input error, never a panic.
 fn classify(pixels: &[u8], width: usize, height: usize, format: PixelFormat) -> Result<Vec<Terrain>, Error> {
     let ch = format.channels();

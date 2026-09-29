@@ -117,7 +117,7 @@ fn run_vectorize() -> ExitCode {
 const GENERATE_USAGE: &str = "\
 Usage: maptool generate <input.png|input.bmp> [-o output.maptool] [options]
 
-Turns a hand-painted border map (white = land, #00FF00 = sea/lake, black = a border
+Turns a hand-painted border map (white = land, #0000FF = sea/lake, black = a border
 line to respect, absorbed into whichever neighbouring province is nearest) into a
 province map you can open in the editor.
 

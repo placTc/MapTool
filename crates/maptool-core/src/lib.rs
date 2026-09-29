@@ -7,6 +7,7 @@
 mod build;
 mod csv;
 mod document;
+mod generate;
 mod geom;
 mod groups;
 mod label;
@@ -21,6 +22,7 @@ use std::fmt::{self, Write};
 
 pub use csv::CsvReport;
 pub use document::{Document, Level, StateStats, Unit, ViewMode, biome_names, filter, is_map_file};
+pub use generate::{GenerateOptions, GeneratedLabels, generate_labels};
 pub use mesh::{MapMesh, ProvinceInfo};
 pub use provinces::{Biome, Kind, ProvinceMeta, ProvinceTable};
 pub use groups::{Group, GroupKind, GroupSet};
@@ -88,6 +90,8 @@ pub enum Error {
     Edit(String),
     /// The triangulation of a province failed (degenerate geometry).
     Tessellation { province: u32, message: String },
+    /// A border-map pixel, for [`generate_labels`], is not white, `#00FF00` or black.
+    InvalidBorderColor { x: u32, y: u32, color: [u8; 3] },
     #[cfg(feature = "io")]
     Image(String),
 }
@@ -141,6 +145,10 @@ impl fmt::Display for Error {
             Error::Tessellation { province, message } => {
                 write!(f, "cannot triangulate province {province}: {message}")
             }
+            Error::InvalidBorderColor { x, y, color: [r, g, b] } => write!(
+                f,
+                "border map pixel ({x}, {y}) is #{r:02x}{g:02x}{b:02x}, expected white (land), green (sea/lake) or black (barrier)"
+            ),
             #[cfg(feature = "io")]
             Error::Image(e) => write!(f, "cannot read image: {e}"),
         }
@@ -193,14 +201,10 @@ impl VectorMap {
     }
 }
 
-/// Check the input and build the label map.
-fn prepare(
-    pixels: &[u8],
-    width: u32,
-    height: u32,
-    format: PixelFormat,
-    opts: &Options,
-) -> Result<label::Labels, Error> {
+/// Check that `pixels` is a plausible `width` x `height` buffer of `format`
+/// pixels: non-empty, small enough for lattice/edge arithmetic to stay in
+/// range, and exactly the expected length.
+fn check_dims(pixels: &[u8], width: u32, height: u32, format: PixelFormat) -> Result<(), Error> {
     if width == 0 || height == 0 {
         return Err(Error::EmptyImage);
     }
@@ -220,12 +224,22 @@ fn prepare(
     if pixels.len() != expected {
         return Err(Error::BufferSize { expected, actual: pixels.len() });
     }
+    Ok(())
+}
 
-    let labels = label::Labels::build(pixels, w, h, format);
-    if opts.validate {
+/// Validate a label map, if asked to.
+fn finish(labels: label::Labels, validate: bool) -> Result<label::Labels, Error> {
+    if validate {
         validate::check(&labels)?;
     }
     Ok(labels)
+}
+
+/// Check the input and build the label map.
+fn prepare(pixels: &[u8], width: u32, height: u32, format: PixelFormat, opts: &Options) -> Result<label::Labels, Error> {
+    check_dims(pixels, width, height, format)?;
+    let labels = label::Labels::build(pixels, width as usize, height as usize, format);
+    finish(labels, opts.validate)
 }
 
 /// Vectorize a `width` x `height` image given as tightly packed pixels.
@@ -275,6 +289,47 @@ pub fn mesh(
         })
         .collect();
     mesh::build(width, height, provinces, rings)
+}
+
+/// A mesh built by [`generate_mesh`], plus which of its provinces are
+/// water — nothing sets [`Kind::Sea`] automatically, so callers apply
+/// `sea_provinces` themselves (e.g. via [`ProvinceTable::set_kind`]).
+pub struct GeneratedMesh {
+    pub mesh: MapMesh,
+    pub sea_provinces: Vec<u32>,
+}
+
+/// Generate a province mesh from a hand-painted border map: white pixels are
+/// land, `#00FF00` pixels are sea/lake, black pixels are a border line
+/// absorbed into whichever province is nearest. See the `generate` module
+/// for the full color contract and algorithm. `mesh_opts`/`flatten_tolerance`
+/// control smoothing/validation exactly like [`mesh`].
+pub fn generate_mesh(
+    pixels: &[u8],
+    width: u32,
+    height: u32,
+    format: PixelFormat,
+    gen_opts: &GenerateOptions,
+    mesh_opts: &Options,
+    flatten_tolerance: f64,
+) -> Result<GeneratedMesh, Error> {
+    let generated = generate::generate_labels(pixels, width, height, format, gen_opts)?;
+    let sea_provinces = generated.sea_provinces;
+    let labels = label::Labels {
+        width: width as usize,
+        height: height as usize,
+        data: generated.data,
+        colors: generated.colors,
+        counts: generated.counts,
+        bboxes: generated.bboxes,
+    };
+    let labels = finish(labels, mesh_opts.validate)?;
+    let rings = build::geometry(&labels, mesh_opts).rings(flatten_tolerance);
+    let provinces = (0..labels.colors.len())
+        .map(|i| ProvinceInfo { id: i as u32, color: labels.colors[i], pixel_count: labels.counts[i], bbox: labels.bboxes[i] })
+        .collect();
+    let mesh = mesh::build(width, height, provinces, rings)?;
+    Ok(GeneratedMesh { mesh, sea_provinces })
 }
 
 /// Decode PNG or BMP bytes to tightly packed RGBA. No color management is applied,

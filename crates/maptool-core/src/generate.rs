@@ -88,7 +88,7 @@ fn classify(pixels: &[u8], width: usize, height: usize, format: PixelFormat) -> 
             let (r, g, b) = (p[0], p[1], p[2]);
             let terrain = match (r, g, b) {
                 (255, 255, 255) => Terrain::Land,
-                (0, 255, 0) => Terrain::Water,
+                (0, 0, 255) => Terrain::Water,
                 (0, 0, 0) => Terrain::Wall,
                 _ => return Err(Error::InvalidBorderColor { x: x as u32, y: y as u32, color: [r, g, b] }),
             };

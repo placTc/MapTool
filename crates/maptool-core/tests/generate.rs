@@ -1,7 +1,7 @@
 use maptool_core::{Error, GenerateOptions, Options, PixelFormat, generate_labels, generate_mesh};
 
 const LAND: u32 = 0xffffff;
-const WATER: u32 = 0x00ff00;
+const WATER: u32 = 0x0000ff;
 const WALL: u32 = 0x000000;
 
 fn rgb(colors: &[u32], w: u32, h: u32) -> Vec<u8> {

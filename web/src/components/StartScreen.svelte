@@ -1,5 +1,6 @@
 <script lang="ts">
   import type { RecentMeta } from '../lib/storage';
+  import GenerateDialog from './GenerateDialog.svelte';
 
   interface Props {
     tolerance: number;
@@ -10,6 +11,7 @@
     busy: boolean;
     status: string;
     onopen: (file: File) => void;
+    ongenerate: (file: File, opts: { landRadius: number; waterRadius: number; splitSeas: boolean; seed: number }) => void;
     onopenrecent: (id: string) => void;
     ondownload: (id: string) => void;
     ondelete: (id: string) => void;
@@ -22,10 +24,13 @@
     busy,
     status,
     onopen,
+    ongenerate,
     onopenrecent,
     ondownload,
     ondelete,
   }: Props = $props();
+
+  let showGenerate = $state(false);
 
   function picked(e: Event & { currentTarget: HTMLInputElement }) {
     const f = e.currentTarget.files?.[0];
@@ -47,6 +52,7 @@
         {busy ? 'Working…' : 'Open a map'}
         <input type="file" accept=".png,.bmp,.maptool,image/png,image/bmp" onchange={picked} disabled={busy} hidden />
       </label>
+      <button class="btn btn-secondary" onclick={() => (showGenerate = true)} disabled={busy}>Generate from border map</button>
       <span class="hint">or drop a file anywhere on this page</span>
     </div>
 
@@ -96,6 +102,10 @@
     {/if}
   </section>
 </div>
+
+{#if showGenerate}
+  <GenerateDialog {busy} {status} onsubmit={ongenerate} oncancel={() => (showGenerate = false)} />
+{/if}
 
 <style>
   .start {

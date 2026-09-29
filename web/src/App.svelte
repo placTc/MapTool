@@ -3,7 +3,7 @@
   import Editor from './components/Editor.svelte';
   import StartScreen from './components/StartScreen.svelte';
   import { fileSafe, stemOf } from './lib/files';
-  import { isMapFile, loadTimings, openMapBytes, type MapDocument } from './lib/map';
+  import { generateMapBytes, isMapFile, loadTimings, openMapBytes, type MapDocument } from './lib/map';
   import * as store from './lib/storage';
 
   // ---- Settings for new maps (only shown on the start screen), remembered between visits
@@ -154,6 +154,30 @@
       } else {
         await useFreshMap(bytes, isMap, name, id, !!saved);
       }
+      status = '';
+    } catch (e) {
+      status = `Error: ${message(e)}`;
+    } finally {
+      busy = false;
+    }
+  }
+
+  /** Generate a province map from a hand-painted border map, then open it like any other map. */
+  async function generateFile(file: File, opts: { landRadius: number; waterRadius: number; splitSeas: boolean; seed: number }) {
+    if (busy) return;
+    busy = true;
+    status = 'Generating…';
+    try {
+      const bytes = new Uint8Array(await file.arrayBuffer());
+      const id = await store.fileId(bytes, `gen:${opts.landRadius}:${opts.waterRadius}:${opts.splitSeas}:${opts.seed}`);
+      const name = nameOf(file.name);
+      await yieldToPaint();
+      const opened = await generateMapBytes(bytes, { ...opts, tolerance, validate });
+      if (!opened.mapName) opened.setMapName(name);
+      pending = { id, name: opened.mapName, file: null };
+      stored = false;
+      await show(opened, opened.mapName, id);
+      editorStatus = `${opened.width}×${opened.height}, ${opened.len.toLocaleString()} provinces (${Math.round(loadTimings.wasmMs)} ms)`;
       status = '';
     } catch (e) {
       status = `Error: ${message(e)}`;
@@ -320,6 +344,7 @@
       {busy}
       {status}
       onopen={openFile}
+      ongenerate={generateFile}
       onopenrecent={openRecent}
       ondownload={downloadRecent}
       ondelete={deleteRecent}

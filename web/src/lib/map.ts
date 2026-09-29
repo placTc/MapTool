@@ -1,4 +1,4 @@
-import init, { Settings, biomeNames, filterFlags, openMap, type MapDocument } from 'maptool-wasm';
+import init, { GenerateSettings, Settings, biomeNames, filterFlags, generateMap, openMap, type MapDocument } from 'maptool-wasm';
 
 export type { MapDocument };
 
@@ -28,6 +28,36 @@ export async function openMapBytes(bytes: Uint8Array, opts: { tolerance: number;
     loadTimings.wasmMs = performance.now() - t;
     return doc;
   } finally {
+    settings.free();
+  }
+}
+
+/**
+ * Generate a province map from a hand-painted border map (white = land, green = sea/lake,
+ * black = a barrier line, absorbed into whichever province is nearest) and open it, the same
+ * way `openMapBytes` opens a PNG/BMP province map. Sea/lake provinces already come back marked
+ * as such.
+ */
+export async function generateMapBytes(
+  bytes: Uint8Array,
+  opts: { landRadius: number; waterRadius: number; splitSeas: boolean; seed: number; tolerance: number; validate: boolean },
+): Promise<MapDocument> {
+  await ensureWasm();
+  const gen = new GenerateSettings();
+  gen.land_radius = opts.landRadius;
+  gen.water_radius = opts.waterRadius;
+  gen.split_seas = opts.splitSeas;
+  gen.seed = opts.seed;
+  const settings = new Settings();
+  settings.tolerance = opts.tolerance;
+  settings.validate = opts.validate;
+  try {
+    const t = performance.now();
+    const doc = generateMap(bytes, gen, settings);
+    loadTimings.wasmMs = performance.now() - t;
+    return doc;
+  } finally {
+    gen.free();
     settings.free();
   }
 }

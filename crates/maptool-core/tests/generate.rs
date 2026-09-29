@@ -176,6 +176,34 @@ fn wall_line_is_split_between_both_neighbouring_provinces() {
 }
 
 #[test]
+fn a_wall_line_is_never_crossed_by_a_single_province() {
+    // A vertical wall splits an otherwise uniform land area into a left half
+    // and a right half. The radius is generous enough that `place_seeds`
+    // falls back to one seed per component, each placed at that component's
+    // first pixel in row-major scan order — i.e. right next to the wall on
+    // the right half. That makes some far-left pixels' straight-line
+    // distance to the *right* seed shorter than to the left seed, which is
+    // exactly the scenario that leaked across the wall before growth treated
+    // a border line as a hard barrier: regardless of relative distance, no
+    // province may ever include pixels from both halves.
+    let (w, h) = (40u32, 20u32);
+    let mut px = vec![LAND; (w * h) as usize];
+    for y in 0..h {
+        px[(y * w + w / 2) as usize] = WALL;
+    }
+    let bytes = rgb(&px, w, h);
+    let g = generate_labels(&bytes, w, h, PixelFormat::Rgb, &opts(1000.0, 1000.0, false, 11)).unwrap();
+
+    let half = w / 2;
+    let ids_in = |xs: std::ops::Range<u32>| -> std::collections::HashSet<u32> {
+        (0..h).flat_map(|y| xs.clone().map(move |x| (x, y))).map(|(x, y)| g.data[(y * w + x) as usize]).collect()
+    };
+    let left = ids_in(0..half);
+    let right = ids_in(half + 1..w);
+    assert!(left.is_disjoint(&right), "a province spans both sides of the wall: {left:?} / {right:?}");
+}
+
+#[test]
 fn sea_provinces_match_water_origin() {
     let (w, h) = (20u32, 10u32);
     let mut px = vec![LAND; (w * h) as usize];

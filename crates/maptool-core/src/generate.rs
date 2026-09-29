@@ -15,6 +15,16 @@
 //! (Manhattan distance), which would make every province a diamond. 4
 //! connectivity is still used for adjacency (matching the rest of the crate),
 //! it just is not what orders the frontier.
+//!
+//! Growth happens in two passes. The first ([`grow`] with `allow_wall:
+//! false`) only ever crosses land-to-land or sea/lake-to-sea/lake: a border
+//! line is a hard barrier here, exactly like a coastline, so a province can
+//! never walk onto a line and back off the other side onto more of its own
+//! terrain — that would defeat the line's entire purpose. Only once every
+//! land and sea/lake pixel is settled does a second pass, seeded by
+//! [`seed_wall_frontier`] and run through [`grow`] again with `allow_wall:
+//! true`, resolve the line's own pixels, splitting its width between
+//! whichever neighbouring province reaches each of them first.
 
 use std::cmp::Reverse;
 use std::collections::{BinaryHeap, VecDeque};
@@ -263,21 +273,32 @@ struct ProvinceRef {
 }
 
 /// Push `(nx, ny)` onto the frontier if it is still unclaimed and its raw
-/// terrain is either the province's own origin terrain or a border line.
-fn push_if_open(terrain: &[Terrain], growth: &Growth, heap: &mut BinaryHeap<Reverse<(u64, u32, usize)>>, width: u32, nx: u32, ny: u32, p: ProvinceRef) {
+/// terrain is the province's own origin terrain, or — only when `allow_wall`
+/// — a border line. `allow_wall` must be `false` for the primary growth pass
+/// (a border line is a hard barrier there, exactly like a coastline: without
+/// this, a province could walk onto a border-line pixel and back off the
+/// other side onto more of its own terrain, crossing a line it was supposed
+/// to respect) and `true` only for the later pass that resolves border-line
+/// pixels themselves (see [`seed_wall_frontier`]).
+#[allow(clippy::too_many_arguments)] // each parameter is load-bearing; bundling them would just move the count into a one-off struct
+fn push_if_open(terrain: &[Terrain], growth: &Growth, heap: &mut BinaryHeap<Reverse<(u64, u32, usize)>>, width: u32, nx: u32, ny: u32, p: ProvinceRef, allow_wall: bool) {
     let npixel = (ny * width + nx) as usize;
-    if growth.data[npixel] == NONE && (terrain[npixel] == p.origin || terrain[npixel] == Terrain::Wall) {
+    let t = terrain[npixel];
+    if growth.data[npixel] == NONE && (t == p.origin || (allow_wall && t == Terrain::Wall)) {
         heap.push(Reverse((dist2(nx, ny, p.x, p.y), p.id, npixel)));
     }
 }
 
 /// Grow every province from the seeds already pushed onto `heap`: pop the
 /// closest pending claim, skip it if the pixel was claimed since it was
-/// pushed, otherwise claim it and offer its open neighbours. This is what
-/// makes coastlines self-enforcing (a province can never enter the other
-/// terrain) and splits a border line's width between whichever side's
-/// frontier reaches each of its pixels first.
-fn grow(terrain: &[Terrain], width: usize, height: usize, growth: &mut Growth, mut heap: BinaryHeap<Reverse<(u64, u32, usize)>>) {
+/// pushed, otherwise claim it and offer its open neighbours. With
+/// `allow_wall: false` this is what makes both coastlines and border lines a
+/// hard barrier during primary growth (a province can never enter another
+/// terrain, nor cross a border line to reach more of its own). Called a
+/// second time with `allow_wall: true` (seeded by [`seed_wall_frontier`]) to
+/// resolve border-line pixels afterward, splitting a line's width between
+/// whichever side's frontier reaches each of its pixels first.
+fn grow(terrain: &[Terrain], width: usize, height: usize, growth: &mut Growth, mut heap: BinaryHeap<Reverse<(u64, u32, usize)>>, allow_wall: bool) {
     let (width, height) = (width as u32, height as u32);
     while let Some(Reverse((_, province, pixel))) = heap.pop() {
         if growth.data[pixel] != NONE {
@@ -287,18 +308,53 @@ fn grow(terrain: &[Terrain], width: usize, height: usize, growth: &mut Growth, m
         growth.claim(pixel, x, y, province);
         let p = ProvinceRef { id: province, origin: growth.origin[province as usize], x: growth.ref_point[province as usize].0, y: growth.ref_point[province as usize].1 };
         if x > 0 {
-            push_if_open(terrain, growth, &mut heap, width, x - 1, y, p);
+            push_if_open(terrain, growth, &mut heap, width, x - 1, y, p, allow_wall);
         }
         if x + 1 < width {
-            push_if_open(terrain, growth, &mut heap, width, x + 1, y, p);
+            push_if_open(terrain, growth, &mut heap, width, x + 1, y, p, allow_wall);
         }
         if y > 0 {
-            push_if_open(terrain, growth, &mut heap, width, x, y - 1, p);
+            push_if_open(terrain, growth, &mut heap, width, x, y - 1, p, allow_wall);
         }
         if y + 1 < height {
-            push_if_open(terrain, growth, &mut heap, width, x, y + 1, p);
+            push_if_open(terrain, growth, &mut heap, width, x, y + 1, p, allow_wall);
         }
     }
+}
+
+/// Seed every still-unclaimed border-line pixel adjacent to an already-claimed
+/// pixel, so a following `grow(.., allow_wall: true)` pass can resolve every
+/// border-line pixel without ever letting the original growth cross a line to
+/// reach more of its own terrain. Run only after the primary growth pass has
+/// fully claimed every land and sea/lake pixel (each component is internally
+/// connected through its own terrain alone, so it needs no border-line
+/// shortcut to be fully covered) — by then every pixel this function's
+/// `push_if_open` calls can still open is a border-line pixel, never land or
+/// sea/lake belonging to some other, now-unreachable component.
+fn seed_wall_frontier(terrain: &[Terrain], width: usize, height: usize, growth: &Growth) -> BinaryHeap<Reverse<(u64, u32, usize)>> {
+    let mut heap = BinaryHeap::new();
+    let (width_u32, height_u32) = (width as u32, height as u32);
+    for i in 0..width * height {
+        let province = growth.data[i];
+        if province == NONE {
+            continue;
+        }
+        let p = ProvinceRef { id: province, origin: growth.origin[province as usize], x: growth.ref_point[province as usize].0, y: growth.ref_point[province as usize].1 };
+        let (x, y) = ((i % width) as u32, (i / width) as u32);
+        if x > 0 {
+            push_if_open(terrain, growth, &mut heap, width_u32, x - 1, y, p, true);
+        }
+        if x + 1 < width_u32 {
+            push_if_open(terrain, growth, &mut heap, width_u32, x + 1, y, p, true);
+        }
+        if y > 0 {
+            push_if_open(terrain, growth, &mut heap, width_u32, x, y - 1, p, true);
+        }
+        if y + 1 < height_u32 {
+            push_if_open(terrain, growth, &mut heap, width_u32, x, y + 1, p, true);
+        }
+    }
+    heap
 }
 
 /// After [`grow`], any pixel still unclaimed is a border-line pocket with no
@@ -535,11 +591,20 @@ pub fn generate_labels(pixels: &[u8], width: u32, height: u32, format: PixelForm
                 heap.push(Reverse((0, province, seed_pixel)));
             }
         } else {
-            claim_whole_water_component(&water_ids, component, &terrain, w, h, &mut growth, &mut heap, &mut sea_provinces);
+            claim_whole_water_component(&water_ids, component, w, &mut growth, &mut sea_provinces);
         }
     }
 
-    grow(&terrain, w, h, &mut growth, heap);
+    // Primary growth: a border line is a hard barrier, exactly like a
+    // coastline, so land and sea/lake never cross one to reach more of their
+    // own terrain. Every land/sea component is fully claimed by this point —
+    // each is internally connected through its own terrain alone.
+    grow(&terrain, w, h, &mut growth, heap, false);
+    // Resolve the border-line pixels themselves, now that every neighbouring
+    // province is settled: split between whichever side's frontier reaches
+    // each of them first.
+    let wall_heap = seed_wall_frontier(&terrain, w, h, &growth);
+    grow(&terrain, w, h, &mut growth, wall_heap, true);
     claim_unreachable_pockets(w, h, &mut growth);
     repair_junctions_and_exclaves(w, h, &mut growth);
 
@@ -547,20 +612,12 @@ pub fn generate_labels(pixels: &[u8], width: u32, height: u32, format: PixelForm
     Ok(GeneratedLabels { width, height, data: growth.data, colors, counts: growth.counts, bboxes: growth.bboxes, sea_provinces })
 }
 
-/// Pre-claim one whole, un-split water component around its centroid, then
-/// seed the frontier with its unclaimed border-line neighbours so the
-/// wall-splitting phase can still reach it.
-#[allow(clippy::too_many_arguments)]
-fn claim_whole_water_component(
-    water_ids: &[u32],
-    component: u32,
-    terrain: &[Terrain],
-    width: usize,
-    height: usize,
-    growth: &mut Growth,
-    heap: &mut BinaryHeap<Reverse<(u64, u32, usize)>>,
-    sea_provinces: &mut Vec<u32>,
-) {
+/// Claim every pixel of one whole, un-split water component as a single
+/// province, around its centroid. Its border-line neighbours are resolved
+/// later, by [`seed_wall_frontier`]/the second [`grow`] pass, exactly like
+/// every other province's — this function only needs to claim the
+/// component's own (already fully connected) interior.
+fn claim_whole_water_component(water_ids: &[u32], component: u32, width: usize, growth: &mut Growth, sea_provinces: &mut Vec<u32>) {
     let (mut sum_x, mut sum_y, mut n) = (0u64, 0u64, 0u64);
     for (i, &id) in water_ids.iter().enumerate() {
         if id == component {
@@ -576,28 +633,11 @@ fn claim_whole_water_component(
     let province = growth.new_province(Terrain::Water, centroid);
     sea_provinces.push(province);
 
-    let (width_u32, height_u32) = (width as u32, height as u32);
     for (i, &id) in water_ids.iter().enumerate() {
         if id != component {
             continue;
         }
         let (x, y) = ((i % width) as u32, (i / width) as u32);
         growth.claim(i, x, y, province);
-        let p = ProvinceRef { id: province, origin: Terrain::Water, x: centroid.0, y: centroid.1 };
-        // Only Wall neighbours matter here: Land/Water neighbours are handled by
-        // `grow`'s normal same-terrain expansion (Water-origin already covers Water),
-        // and this component's own interior is already fully claimed above.
-        if x > 0 && terrain[i - 1] == Terrain::Wall {
-            push_if_open(terrain, growth, heap, width_u32, x - 1, y, p);
-        }
-        if x + 1 < width_u32 && terrain[i + 1] == Terrain::Wall {
-            push_if_open(terrain, growth, heap, width_u32, x + 1, y, p);
-        }
-        if y > 0 && terrain[i - width] == Terrain::Wall {
-            push_if_open(terrain, growth, heap, width_u32, x, y - 1, p);
-        }
-        if y + 1 < height_u32 && terrain[i + width] == Terrain::Wall {
-            push_if_open(terrain, growth, heap, width_u32, x, y + 1, p);
-        }
     }
 }

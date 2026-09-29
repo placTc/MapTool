@@ -3,6 +3,7 @@ use wasm_bindgen::prelude::*;
 
 mod color;
 mod document_io;
+mod generate;
 mod groups;
 mod lookup;
 mod mesh_buffers;

@@ -10,3 +10,5 @@ path = "src/main.rs"
 
 [dependencies]
 maptool-core = { path = "../maptool-core", features = ["io"] }
+# For --png's color-coded province PNG, since maptool-core doesn't re-export encoding.
+image = { version = "0.25", default-features = false, features = ["png"] }
